@@ -8,6 +8,7 @@ import vm from 'node:vm';
 function loadWidget() {
   const handlers = new Map();
   const panel = { innerHTML: '' };
+  const stored = {};
   const sent = [];
   const pendingReplies = [];
 
@@ -65,7 +66,25 @@ function loadWidget() {
       }
     },
     chrome: {
-      storage: { local: { get: async () => ({}), set: async () => {} } },
+      storage: {
+        local: {
+          get: async (keys) => {
+            const names = Array.isArray(keys) ? keys : [keys];
+            const result = {};
+
+            for (const name of names) {
+              if (Object.prototype.hasOwnProperty.call(stored, name)) {
+                result[name] = stored[name];
+              }
+            }
+
+            return result;
+          },
+          set: async (items) => {
+            Object.assign(stored, items);
+          }
+        }
+      },
       runtime: {
         sendMessage(message) {
           sent.push(message);
@@ -266,6 +285,31 @@ test('the T-Mobile repost row counts matches and links each earlier posting', as
   assert.match(html, /title="This posting may have been removed\."/);
   assert.doesNotMatch(html, /5 hours ago/);
   assert.doesNotMatch(html, />This posting may have been removed/);
+});
+
+test('hide stays collapsed when another job is selected and checked', async () => {
+  const page = loadWidget();
+
+  await page.widget.analyze(jobA);
+  assert.match(page.panel.innerHTML, />Hide</);
+  page.click('ghd-expand');
+  assert.match(page.panel.innerHTML, />Expand</);
+  assert.doesNotMatch(page.panel.innerHTML, /Description Clarity/);
+
+  await page.widget.analyze(jobB);
+  assert.match(page.panel.innerHTML, />Expand</);
+  assert.doesNotMatch(page.panel.innerHTML, /Description Clarity/);
+
+  page.click('ghd-full');
+  await flush();
+  page.reply(0, remoteAnalysis(4));
+  await flush();
+
+  assert.match(page.panel.innerHTML, />Expand</);
+  assert.doesNotMatch(page.panel.innerHTML, /Description Clarity/);
+  page.click('ghd-expand');
+  assert.match(page.panel.innerHTML, />Hide</);
+  assert.match(page.panel.innerHTML, /Description Clarity/);
 });
 
 test('returning to a job whose check is still running shows it as checking', async () => {
