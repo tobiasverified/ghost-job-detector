@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup-container">
+    <header class="header">
+      <div class="header-brand">
+        <span class="app-icon">👻</span>
+        <h1 class="app-title">Ghost Job Detector</h1>
+      </div>
+    </header>
+    <section class="factors-section">
+      <p class="summary-text">The score stays on the job page. Open a LinkedIn or Workday posting and use the widget in the corner.</p>
+      <label class="factor-label" for="apiBaseInput">Backend URL</label>
+      <input id="apiBaseInput" type="url" placeholder="https://your-app.vercel.app" />
+      <p id="apiBaseStatus" class="summary-text"></p>
+      <button class="btn btn-primary" id="saveApiBase" type="button">Save</button>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

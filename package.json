@@ -1,0 +1,16 @@
+{
+  "name": "ghost-job-detector",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@vercel/functions": "^3.9.9",
+    "cheerio": "^1.1.2"
+  },
+  "scripts": {
+    "test": "node --test test/layoffs.test.js test/reviews.test.js test/analyze.test.js test/job-page.test.js test/reposts.test.js test/secrets.test.js test/search.test.js test/workforce.test.js test/page-fetch.test.js test/headcount.test.js test/company-rating.test.js test/company-identity.test.js test/company-headcount.test.js test/groq.test.js test/employee-search.test.js test/open-jobs.test.js test/vagueness.test.js test/widget.test.js"
+  }
+}

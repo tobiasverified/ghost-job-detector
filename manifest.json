@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "Ghost Job Detector",
+  "version": "1.1.10",
+  "description": "Flag possible ghost job postings on LinkedIn and Workday.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "tabs",
+    "scripting",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "*://*.linkedin.com/*",
+    "*://*.myworkdayjobs.com/*",
+    "https://*.vercel.app/*",
+    "https://html.duckduckgo.com/*",
+    "https://duckduckgo.com/*",
+    "https://lite.duckduckgo.com/*",
+    "https://www.wikidata.org/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.linkedin.com/jobs/*",
+        "*://*.linkedin.com/jobs/search*",
+        "*://*.linkedin.com/jobs/search?*",
+        "*://linkedin.com/jobs/*"
+      ],
+      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/widget.js", "content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.myworkdayjobs.com/*"],
+      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/widget.js", "content/workday.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "*://*.linkedin.com/company/*",
+        "*://linkedin.com/company/*"
+      ],
+      "js": ["lib/company-headcount.js", "content/linkedin-company.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html"
+  }
+}

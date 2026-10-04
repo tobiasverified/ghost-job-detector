@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "buildCommand": "exit 0",
+  "outputDirectory": ".",
+  "public": false,
+  "functions": {
+    "api/analyze-job.js": { "maxDuration": 15 },
+    "api/company-rating.js": { "maxDuration": 15 },
+    "api/company-identity.js": { "maxDuration": 10 },
+    "api/company-reviews.js": { "maxDuration": 10 }
+  }
+}
