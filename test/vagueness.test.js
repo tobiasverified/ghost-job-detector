@@ -75,6 +75,48 @@ function explain(result) {
   return `${result.label} (${result.score}) specificity=${result.raw.specificity} tools=${result.raw.namedTools} scope=${result.raw.quantifiedScope} reporting=${result.raw.reporting} deliverables=${result.raw.concreteDeliverables} years=${result.raw.experienceStated} buzz=${result.raw.buzzwords}@${result.raw.buzzwordDensity}/100 words=${result.raw.wordCount}`;
 }
 
+test('description clarity explains the points behind Very Vague and Clear', () => {
+  const vagueText = 'We need someone with 5 years of experience. '.repeat(8);
+  const vague = heuristics.analyzeVagueness(vagueText);
+  const vagueRow = heuristics.buildFactors(
+    vague,
+    { unavailable: true, detected: false, score: 0 },
+    { available: false },
+    { unavailable: true, rating: null, score: 0 },
+    { unavailable: true, available: false, score: 0 }
+  ).find((factor) => factor.label === 'Description Clarity');
+  let clearText = `
+    The platform team uses Python and AWS for deployment pipelines.
+    Monthly volume is 200+ requests.
+    Requirements include 5 years of experience with SQL.
+    The salary range is $160,000-$190,000.
+  `;
+
+  while (clearText.split(/\s+/).filter(Boolean).length < 260) {
+    clearText += ' The team keeps the service running for customers.';
+  }
+  const clear = heuristics.analyzeVagueness(clearText);
+  const clearRow = heuristics.buildFactors(
+    clear,
+    { unavailable: true, detected: false, score: 0 },
+    { available: false },
+    { unavailable: true, rating: null, score: 0 },
+    { unavailable: true, available: false, score: 0 }
+  ).find((factor) => factor.label === 'Description Clarity');
+
+  assert.equal(vague.label, 'Very Vague');
+  assert.equal(JSON.stringify(vagueRow.explain), JSON.stringify([
+    'Under 150 words (+30)',
+    'No salary listed (+10)',
+    'Only 1 of 5 concrete-detail signals found'
+  ]));
+  assert.equal(clear.label, 'Clear');
+  assert.equal(clear.score < 10, true);
+  assert.equal(JSON.stringify(clearRow.explain), JSON.stringify([
+    '3 of 5 concrete-detail signals found (tools, scope numbers, reporting line, specific tasks, years of experience)'
+  ]));
+});
+
 test('a detailed software posting keeps a path through specificity, not a tech-keyword list', () => {
   const result = analyzeVagueness(SOFTWARE_POSTING);
   const client = heuristics.analyzeVagueness(SOFTWARE_POSTING);
