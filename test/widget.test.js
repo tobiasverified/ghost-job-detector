@@ -82,6 +82,7 @@ function loadWidget() {
 
   return {
     widget: sandbox.GhdWidget,
+    heuristics: sandbox.GhostJobHeuristics,
     panel,
     sent,
     click(id) {
@@ -114,6 +115,79 @@ function remoteAnalysis(rating) {
     cached: false
   };
 }
+
+test('a full check with fewer than two informative factors shows no score', async () => {
+  const page = loadWidget();
+  const blank = {
+    layoff: { unavailable: false, detected: false, score: 0 },
+    reviews: { unavailable: false, rating: null, score: 0, detail: 'No public reviews found' },
+    workforce: { available: false, employees: null, score: 0 },
+    reposts: { unavailable: true, available: false, score: 0 }
+  };
+  const scored = {
+    layoff: { unavailable: true, detected: false, score: 0 },
+    reviews: { rating: 3.6, unavailable: false, score: 4, platform: 'Glassdoor' },
+    workforce: { available: false, employees: null, score: 0 },
+    reposts: { unavailable: false, available: true, score: 0, detail: 'No other LinkedIn posting matched this role.' }
+  };
+
+  assert.equal(page.heuristics.informativeFactorCount(blank), 1);
+  assert.equal(page.heuristics.informativeFactorCount(scored), 2);
+
+  await page.widget.analyze({
+    jobId: 'blank',
+    title: 'Analyst',
+    company: 'Acme',
+    description: 'Too short to score.',
+    url: 'https://www.linkedin.com/jobs/view/blank'
+  });
+  page.click('ghd-full');
+  await flush();
+  page.reply(0, {
+    ghostScore: 30,
+    label: 'Ghost Job: Unlikely',
+    factors: {
+      vagueness: { score: 30, label: 'Too Short' },
+      layoffs: blank.layoff,
+      reviews: blank.reviews,
+      hiringRatio: blank.workforce,
+      reposts: blank.reposts
+    },
+    cached: false
+  });
+  await flush();
+
+  const withheld = page.panel.innerHTML;
+  assert.match(withheld, /Not enough data to score/);
+  assert.doesNotMatch(withheld, /class="number"/);
+  assert.doesNotMatch(withheld, /stroke-dasharray/);
+  assert.doesNotMatch(withheld, /Unlikely/);
+  assert.match(withheld, /No recent coverage/);
+  assert.match(withheld, /No public reviews found/);
+  assert.match(withheld, />Unavailable</);
+
+  const scoredPage = loadWidget();
+  await scoredPage.widget.analyze(jobA);
+  scoredPage.click('ghd-full');
+  await flush();
+  scoredPage.reply(0, {
+    ghostScore: 4,
+    label: 'Ghost Job: Unlikely',
+    factors: {
+      vagueness: { score: 0, label: 'Clear' },
+      layoffs: scored.layoff,
+      reviews: scored.reviews,
+      hiringRatio: scored.workforce,
+      reposts: scored.reposts
+    },
+    cached: false
+  });
+  await flush();
+
+  assert.match(scoredPage.panel.innerHTML, /class="number"/);
+  assert.doesNotMatch(scoredPage.panel.innerHTML, /Not enough data to score/);
+  assert.match(scoredPage.panel.innerHTML, /No duplicate found/);
+});
 
 test('a full check that finishes after switching jobs is kept and shown on coming back', async () => {
   const page = loadWidget();
