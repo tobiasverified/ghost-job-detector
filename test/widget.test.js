@@ -102,7 +102,7 @@ function loadWidget({ holdPay = false } = {}) {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(new URL('../lib/heuristics.js', import.meta.url), 'utf8'), sandbox);
-  vm.runInContext(readFileSync(new URL('../lib/pay.cjs', import.meta.url), 'utf8'), sandbox);
+  vm.runInContext(readFileSync(new URL('../lib/pay.js', import.meta.url), 'utf8'), sandbox);
   vm.runInContext(readFileSync(new URL('../lib/widget.js', import.meta.url), 'utf8'), sandbox);
 
   return {

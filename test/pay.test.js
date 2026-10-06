@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
 import { MemoryCache } from '../lib/server/cache.js';
 import { analyzeJobPosting, companySizeLine } from '../lib/server/analyze.js';
 import { HOURLY_REQUEST_LIMIT } from '../lib/server/rateLimit.js';
@@ -14,8 +14,31 @@ import {
   marketCacheKey
 } from '../lib/server/pay-market.js';
 
-const require = createRequire(import.meta.url);
-const pay = require('../lib/pay.cjs');
+function loadPay() {
+  const sandbox = { console, module: { exports: {} } };
+  sandbox.exports = sandbox.module.exports;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('../lib/pay.js', import.meta.url), 'utf8'), sandbox);
+  return sandbox.module.exports;
+}
+
+const pay = loadPay();
+
+test('a second injection of pay.js keeps the first copy', () => {
+  const sandbox = { console, module: { exports: {} } };
+  sandbox.exports = sandbox.module.exports;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  const source = readFileSync(new URL('../lib/pay.js', import.meta.url), 'utf8');
+  vm.runInContext(source, sandbox);
+  const first = sandbox.GhdPay.parsePostedPay;
+  vm.runInContext(source, sandbox);
+
+  assert.equal(sandbox.__GHD_PAY__, true);
+  assert.equal(sandbox.GhdPay.parsePostedPay, first);
+  assert.equal(typeof first, 'function');
+});
 
 const NOW = new Date('2026-10-06T12:00:00Z');
 const ESTIMATE = JSON.parse(readFileSync(new URL('./fixtures/salary/estimate.software-engineer.new-york.json', import.meta.url), 'utf8'));

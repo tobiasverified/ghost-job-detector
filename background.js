@@ -32,11 +32,11 @@ function filesForUrl(rawUrl) {
   }
 
   if (page === 'linkedin') {
-    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.cjs', 'lib/widget.js', 'content.js'];
+    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.js', 'lib/widget.js', 'content.js'];
   }
 
   if (page === 'workday') {
-    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.cjs', 'lib/widget.js', 'content/workday.js'];
+    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.js', 'lib/widget.js', 'content/workday.js'];
   }
 
   return null;
