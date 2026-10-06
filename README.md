@@ -14,7 +14,7 @@ The score is a heuristic. It is not proof that a listing is fake.
 | Many open jobs vs employees | 0-15 | Counted in the page when both numbers are visible |
 | Reposts of the same role | 0 or 15 | Another LinkedIn posting of the same title, company, and city adds 15 |
 
-0-34 is Unlikely, 35-49 is Possible, and 50 or higher is Likely.
+0-34 is Not detected, 35-49 is Possible, and 50 or higher is Likely.
 
 Subsidiary names are searched as well as the full company name. A Hyundai Supernal posting is also checked as Supernal, so a Hyundai Motor layoff article is not treated as a Supernal layoff.
 

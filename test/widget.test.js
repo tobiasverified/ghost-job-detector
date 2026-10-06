@@ -138,7 +138,7 @@ function payAnalysis(rating = 4.2) {
 function remoteAnalysis(rating) {
   return {
     ghostScore: 10,
-    label: 'Ghost Job: Unlikely',
+    label: 'Ghost Job: Not detected',
     factors: {
       layoffs: { detected: false, unavailable: false, score: 0 },
       reviews: { rating, platform: 'Glassdoor', score: 0, unavailable: false },
@@ -190,7 +190,7 @@ test('a full check with fewer than two informative factors shows no score', asyn
   await flush();
   page.reply(0, {
     ghostScore: 30,
-    label: 'Ghost Job: Unlikely',
+    label: 'Ghost Job: Not detected',
     factors: {
       vagueness: { score: 30, label: 'Too Short' },
       layoffs: blank.layoff,
@@ -216,7 +216,7 @@ test('a full check with fewer than two informative factors shows no score', asyn
   assert.match(withheld, /Not enough data to score/);
   assert.doesNotMatch(withheld, /class="number"/);
   assert.doesNotMatch(withheld, /stroke-dasharray/);
-  assert.doesNotMatch(withheld, /Unlikely/);
+  assert.doesNotMatch(withheld, /Not detected|Unlikely/);
   assert.match(withheld, /No recent coverage/);
   assert.match(withheld, /No public reviews found/);
   assert.match(withheld, />Unavailable</);
@@ -227,7 +227,7 @@ test('a full check with fewer than two informative factors shows no score', asyn
   await flush();
   scoredPage.reply(0, {
     ghostScore: 4,
-    label: 'Ghost Job: Unlikely',
+    label: 'Ghost Job: Not detected',
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: scored.layoff,
@@ -298,7 +298,7 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
 
   page.reply(2, {
     ghostScore: 4,
-    label: 'Ghost Job: Unlikely',
+    label: 'Ghost Job: Not detected',
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { unavailable: false, detected: false, score: 0 },
@@ -589,7 +589,7 @@ test('the T-Mobile repost row counts matches and links each earlier posting', as
   };
   page.reply(0, {
     ghostScore: 4,
-    label: 'Ghost Job: Unlikely',
+    label: 'Ghost Job: Not detected',
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { detected: false, unavailable: false, score: 0 },

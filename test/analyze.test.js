@@ -130,7 +130,7 @@ test('a clean company with a specific description stays in the unlikely band', a
   assert.equal(analysis.factors.layoffs.detected, false);
   assert.equal(analysis.factors.layoffs.unavailable, false);
   assert.ok(analysis.ghostScore <= 34);
-  assert.equal(analysis.label, 'Ghost Job: Unlikely');
+  assert.equal(analysis.label, 'Ghost Job: Not detected');
 });
 
 test('successful analyses are cached for the next request', async () => {
