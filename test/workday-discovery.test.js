@@ -9,6 +9,7 @@ import {
   resolveOpenJobCount,
   workdaySiteWords,
   workdayTenantNamesCompany,
+  workdayUrlNamesCompany,
   WORKDAY_TOTAL_CAP
 } from '../lib/server/open-jobs.js';
 
@@ -300,4 +301,162 @@ test('a sub-board found by search is not counted as the whole company (Cleveland
   assert.equal(counted.workdayBoard, 'https://ccf.wd1.myworkdayjobs.com/ClevelandClinicCareers');
   assert.equal(counted.count, 2766);
   assert.equal(counted.lowerBound, true);
+});
+
+const AWS_CANDIDATES = [
+  'https://zendesk.wd1.myworkdayjobs.com/en-US/zendesk',
+  'https://ingrammicro.wd5.myworkdayjobs.com/en-US/ingrammicro',
+  'https://accenture.wd103.myworkdayjobs.com/en-US/AccentureCareers'
+];
+
+test('Zendesk, Ingram Micro and Accenture boards for Amazon Web Services are rejected from the URL, with no page fetch', async () => {
+  const fetched = [];
+
+  for (const url of AWS_CANDIDATES) {
+    assert.equal(workdayUrlNamesCompany(parseWorkdayBoard(url), 'Amazon Web Services'), false, url);
+  }
+
+  const counted = await resolveOpenJobCount('Amazon Web Services', {
+    profile: Promise.resolve({ glassdoorSize: 'Unknown', openJobs: 8220 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async (query) => (query.startsWith('site:myworkdayjobs.com')
+      ? AWS_CANDIDATES.map((url) => ({ url, title: '', snippet: '' }))
+      : []),
+    fetch: async (url) => {
+      fetched.push(String(url));
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+
+  assert.equal(fetched.some((url) => url.includes('myworkdayjobs.com')), false);
+  assert.equal(counted.source, 'glassdoor');
+  assert.equal(counted.count, 8220);
+  assert.equal(counted.lowerBound, true);
+});
+
+test('candidate boards are verified together, and the first match in search order is kept', async () => {
+  let active = 0;
+  let peak = 0;
+  const page = '<html><head><meta property="og:title" content="Cleveland Clinic"></head></html>';
+  const pages = {
+    'https://ccf.wd1.myworkdayjobs.com/ClevelandClinicCareers': 80,
+    'https://other.wd1.myworkdayjobs.com/en-US/ClevelandClinicJobs': 10
+  };
+  const counted = await resolveOpenJobCount('Cleveland Clinic', {
+    profile: Promise.resolve({ glassdoorSize: '10000+ Employees', openJobs: 100 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async (query) => (query.startsWith('site:myworkdayjobs.com')
+      ? Object.keys(pages).map((url) => ({ url, title: '', snippet: '' }))
+      : []),
+    fetch: async (url) => {
+      const href = String(url);
+
+      if (href.includes('/wday/cxs/ccf/ClevelandClinicCareers/')) {
+        return { ok: true, status: 200, json: async () => ({ total: 400 }) };
+      }
+
+      if (href.includes('/wday/cxs/other/ClevelandClinicJobs/')) {
+        return { ok: true, status: 200, json: async () => ({ total: 12 }) };
+      }
+
+      if (pages[href] != null) {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, pages[href]));
+        active -= 1;
+        return { ok: true, status: 200, text: async () => page };
+      }
+
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    }
+  });
+
+  assert.ok(peak >= 2);
+  assert.equal(counted.source, 'workday');
+  assert.equal(counted.count, 400);
+  assert.equal(counted.url, 'https://ccf.wd1.myworkdayjobs.com/ClevelandClinicCareers');
+});
+
+test('AWS skips the board search when a headcount of 147,927 is already known and Glassdoor size is Unknown', async () => {
+  const cases = [
+    { wikidataMemo: new Map([['amazon web services', Promise.resolve({ count: 147927 })]]) },
+    { capturedHeadcount: { employees: 147927, capturedAt: NOW.getTime() } },
+    { employeeSearchMemo: new Map([['amazon web services', Promise.resolve({ employees: 147927, sourceUrl: 'https://example.com/aws' })]]) }
+  ];
+
+  for (const extra of cases) {
+    const searches = [];
+    await resolveOpenJobCount('Amazon Web Services', {
+      profile: Promise.resolve({ glassdoorSize: 'Unknown', openJobs: 8220 })
+    }, {
+      now: NOW,
+      cache: new MemoryCache(),
+      webSearch: async (query) => {
+        searches.push(query);
+        return [];
+      },
+      fetch: async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' }),
+      ...extra
+    });
+
+    assert.equal(searches.includes('"Amazon Web Services" jobs'), false);
+    assert.equal(searches[0], 'site:myworkdayjobs.com Amazon Web Services');
+  }
+});
+
+test('a mid-size company with no headcount estimate still searches boards', async () => {
+  const searches = [];
+  await resolveOpenJobCount('Northwind Clinics', {
+    profile: Promise.resolve({ glassdoorSize: '1001 to 5000 Employees', openJobs: 40 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async (query) => {
+      searches.push(query);
+      return [];
+    },
+    fetch: async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' })
+  });
+
+  assert.equal(searches[0], '"Northwind Clinics" jobs');
+  assert.equal(searches[1], 'site:myworkdayjobs.com Northwind Clinics');
+});
+
+test('a missing size is not treated as a small company', async () => {
+  const searches = [];
+  const pending = new Promise(() => {});
+  await resolveOpenJobCount('Amazon Web Services', {
+    profile: Promise.resolve({ glassdoorSize: 'Unknown', openJobs: 8220 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    wikidataMemo: new Map([['amazon web services', pending]]),
+    webSearch: async (query) => {
+      searches.push(query);
+      return [];
+    },
+    fetch: async () => ({ ok: false, status: 404, json: async () => ({}), text: async () => '' })
+  });
+
+  assert.equal(searches.includes('"Amazon Web Services" jobs'), false);
+  assert.equal(searches[0], 'site:myworkdayjobs.com Amazon Web Services');
+});
+
+test('TKO, Argonne, NVIDIA, Salesforce, Adobe and Mass General Brigham addresses still name the company', () => {
+  const accepted = [
+    ['TKO Group Holdings', 'https://wwecorp.wd5.myworkdayjobs.com/en-US/TKO'],
+    ['Argonne National Laboratory', 'https://argonne.wd1.myworkdayjobs.com/en-US/Argonne_Careers'],
+    ['NVIDIA', 'https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite'],
+    ['Salesforce', 'https://salesforce.wd12.myworkdayjobs.com/en-US/External_Career_Site'],
+    ['Adobe', 'https://adobe.wd5.myworkdayjobs.com/en-US/external_experienced'],
+    ['Mass General Brigham', 'https://massgeneralbrigham.wd1.myworkdayjobs.com/MGBExternal']
+  ];
+
+  for (const [company, url] of accepted) {
+    assert.equal(workdayUrlNamesCompany(parseWorkdayBoard(url), company), true, company);
+  }
 });

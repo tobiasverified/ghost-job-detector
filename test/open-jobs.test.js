@@ -178,7 +178,7 @@ test('a filtered UMiami Workday listing is not the company total', async () => {
   assert.notEqual(counted.count, 2083);
 });
 
-test('a Workday tenant is counted from the first CXS page total after the org name matches', async () => {
+test('a Workday address that shares no word with the company is rejected before its page is fetched', async () => {
   const calls = [];
   const counted = await resolveOpenJobCount('TKO Group Holdings', {
     website: 'https://tkogrp.com'
@@ -193,43 +193,15 @@ test('a Workday tenant is counted from the first CXS page total after the org na
         snippet: 'Careers'
       }];
     },
-    fetch: async (url, options = {}) => {
-      calls.push({ url: String(url), body: options.body || '' });
-
-      if (String(url).includes('/wday/cxs/')) {
-        assert.equal(JSON.parse(options.body).offset, 0);
-        return {
-          ok: true,
-          async json() {
-            return { total: 842, jobPostings: [{ title: 'Director' }] };
-          }
-        };
-      }
-
-      return {
-        ok: true,
-        async text() {
-          return '<html><title>TKO Group Holdings Careers</title><body>Open roles</body></html>';
-        }
-      };
+    fetch: async (url) => {
+      calls.push({ url: String(url) });
+      return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
     }
-  });
-  const workforce = resolveWorkforce({
-    employees: 3001,
-    employeeLabel: '3,001',
-    openJobs: counted.count,
-    openJobsSource: counted.source,
-    openJobsEstimated: counted.estimated
   });
 
   assert.equal(parseWorkdayBoard('https://wwe.wd5.myworkdayjobs.com/en-US/wwe/job/Director_R1').site, 'wwe');
-  assert.equal(counted.count, 842);
-  assert.equal(counted.source, 'workday');
-  assert.equal(counted.estimated, false);
-  assert.equal(calls.filter((call) => call.url.includes('/wday/cxs/')).length, 1);
-  assert.equal(workforce.openRoles, 842);
-  assert.equal(workforce.available, true);
-  assert.doesNotMatch(workforce.label, /estimated/i);
+  assert.equal(calls.some((call) => call.url.includes('myworkdayjobs.com')), false);
+  assert.equal(counted, null);
 });
 
 test('a Workday page for a different organization is rejected and search cites an estimate', async () => {
@@ -395,7 +367,7 @@ function workdayDiscoveryDeps(log) {
       assert.match(query, /site:myworkdayjobs\.com TKO Group Holdings/);
       return [{
         title: 'TKO Group Holdings Careers',
-        url: 'https://wwe.wd5.myworkdayjobs.com/en-US/wwe/job/Stamford/Director_R1',
+        url: 'https://wwecorp.wd5.myworkdayjobs.com/en-US/TKO',
         snippet: 'Careers'
       }];
     },
@@ -556,7 +528,7 @@ function boardSearchDeps({ results, pages = {}, greenhouse = {}, jobs = {}, sear
 test('Spring Health: the search-found Ashby board (67) is used instead of Glassdoor (5)', async () => {
   const searches = [];
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ website: 'https://www.springhealth.com/', openJobs: 5 })
+    profile: Promise.resolve({ website: 'https://www.springhealth.com/', openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     searches,
     results: [{ title: 'Spring Health Jobs', url: `https://jobs.ashbyhq.com/${SPRING_BOARD}/3daaa470-0c6b-4c57-a793-d9abe54dbf11` }],
@@ -576,7 +548,7 @@ test('V1: a board whose own name is another organization is not counted', async 
 
   // The address passes S2, so only the board's own name can reject it.
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ openJobs: 5 })
+    profile: Promise.resolve({ openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     results: [{ title: 'Spring Health jobs', url: 'https://boards.greenhouse.io/springhealth' }],
     greenhouse: { springhealth: 'Lyra Health' },
@@ -589,7 +561,7 @@ test('V1: a board whose own name is another organization is not counted', async 
 
 test('V2: a board whose name cannot be read is not counted', async () => {
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ openJobs: 5 })
+    profile: Promise.resolve({ openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     results: [{ title: 'Jobs', url: `https://jobs.ashbyhq.com/${SPRING_BOARD}` }],
     jobs: { [`ashby:${SPRING_BOARD}`]: 67 }
@@ -606,7 +578,7 @@ test('S1: a board named for part of the company is a sub-board and is not counte
   assert.equal(boardNameVerdict('Spring Health', 'Spring Health Jobs').ok, true);
 
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ openJobs: 5 })
+    profile: Promise.resolve({ openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     results: [{ title: 'Spring Health UK', url: 'https://boards.greenhouse.io/springhealth' }],
     greenhouse: { springhealth: 'Spring Health UK' },
@@ -625,7 +597,7 @@ test('S2: a readable board address naming a region is not counted even with the 
   assert.equal(boardTokenVerdict('Spring Health', SPRING_BOARD).id, true);
 
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ openJobs: 5 })
+    profile: Promise.resolve({ openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     results: [{ title: 'Spring Health', url: 'https://boards.greenhouse.io/springhealth-emea' }],
     greenhouse: { 'springhealth-emea': 'Spring Health' },
@@ -637,7 +609,7 @@ test('S2: a readable board address naming a region is not counted even with the 
 
 test('S3: two verified boards make the larger one a lower bound', async () => {
   const counted = await resolveOpenJobCount('Spring Health', {
-    profile: Promise.resolve({ openJobs: 5 })
+    profile: Promise.resolve({ openJobs: 5, glassdoorSize: '1001 to 5000 Employees' })
   }, boardSearchDeps({
     results: [
       { title: 'Spring Health Jobs', url: `https://jobs.ashbyhq.com/${SPRING_BOARD}` },
@@ -1227,6 +1199,7 @@ test('a timed-out board search does not keep the Glassdoor floor for a day', asy
   };
   const counted = await resolveOpenJobCount('Airbnb', {
     glassdoorOpenJobs: 28,
+    glassdoorSize: '1001 to 5000 Employees',
     jobTitle: 'Policy Manager, Quality'
   }, { ...deps, now: NOW });
 
