@@ -8,6 +8,7 @@
     "api/company-rating.js": { "maxDuration": 15 },
     "api/company-identity.js": { "maxDuration": 10 },
     "api/company-reviews.js": { "maxDuration": 10 },
-    "api/job-reposts.js": { "maxDuration": 10 }
+    "api/job-reposts.js": { "maxDuration": 10 },
+    "api/careers-check.js": { "maxDuration": 10 }
   }
 }

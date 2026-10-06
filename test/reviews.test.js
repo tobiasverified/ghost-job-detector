@@ -190,8 +190,19 @@ test('a search outage reports reviews as unavailable', async () => {
 
   assert.equal(review.rating, null);
   assert.equal(review.score, 0);
+  assert.equal(review.unavailable, true);
+  assert.notEqual(review.detail, 'No public reviews found');
+});
+
+test('a review search that ran and found nothing says "No public reviews found"', async () => {
+  const review = await findCompanyReviews('Acme', {
+    webSearch: async () => []
+  });
+
+  assert.equal(review.rating, null);
   assert.equal(review.unavailable, false);
   assert.equal(review.detail, 'No public reviews found');
+  assert.equal(review.searchFailed, undefined);
 });
 
 test('review snippets accept common rating formats', () => {

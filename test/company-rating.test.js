@@ -100,9 +100,9 @@ test('a ratings response returns the overall score and caches it for a day', asy
   });
   assert.equal(calls.filter((call) => call.url.includes('rapidapi.com')).length, 1);
 
-  const stored = await cache.get('glassdoor_rating_v3_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
+  const stored = await cache.get('glassdoor_rating_v5_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
   assert.equal(stored.ratings.overall, 3.849);
-  assert.equal(await cache.get('glassdoor_rating_v3_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
+  assert.equal(await cache.get('glassdoor_rating_v5_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
 });
 
 test('parseEmployeeSize reads Glassdoor size buckets', () => {
@@ -141,6 +141,7 @@ test('company details include the rating, size bucket, and open jobs', async () 
     employeeLabel: '10,000+',
     employeesLowerBound: true,
     openJobs: 1844,
+    glassdoorSize: '10000+ Employees',
     source: 'glassdoor',
     cached: false
   });
@@ -167,7 +168,7 @@ test('403 stays unavailable and 429 is quota with no retry', async () => {
 
     assert.deepEqual(rating, { overall: null, error });
     assert.equal(calls, 1);
-    assert.equal(await cache.get('glassdoor_rating_v3_acme', NOW), null);
+    assert.equal(await cache.get('glassdoor_rating_v5_acme', NOW), null);
   }
 });
 
@@ -260,7 +261,7 @@ test('both the full name and the shorter alias missing returns not_found', async
 
   assert.equal(glassdoorCalls, 2);
   assert.deepEqual(rating, { overall: null, error: 'not_found' });
-  assert.equal(await cache.get('glassdoor_rating_v3_amli residential', NOW), null);
+  assert.equal(await cache.get('glassdoor_rating_v5_amli residential', NOW), null);
 });
 
 test('a missing key or a thrown request returns unavailable', async () => {

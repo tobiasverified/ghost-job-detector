@@ -11,6 +11,6 @@
     "cheerio": "^1.1.2"
   },
   "scripts": {
-    "test": "node --test test/layoffs.test.js test/reviews.test.js test/analyze.test.js test/job-page.test.js test/reposts.test.js test/secrets.test.js test/search.test.js test/workforce.test.js test/page-fetch.test.js test/headcount.test.js test/company-rating.test.js test/company-identity.test.js test/company-headcount.test.js test/groq.test.js test/employee-search.test.js test/open-jobs.test.js test/vagueness.test.js test/widget.test.js test/argonne.test.js"
+    "test": "node --test test/layoffs.test.js test/reviews.test.js test/analyze.test.js test/job-page.test.js test/reposts.test.js test/secrets.test.js test/search.test.js test/workforce.test.js test/page-fetch.test.js test/headcount.test.js test/company-rating.test.js test/company-identity.test.js test/company-headcount.test.js test/groq.test.js test/employee-search.test.js test/open-jobs.test.js test/vagueness.test.js test/widget.test.js test/argonne.test.js test/rate-limit.test.js test/workday-discovery.test.js test/glassdoor-weak-entity.test.js test/glassdoor-label-retry.test.js test/glassdoor-fields.test.js test/reposts-ats.test.js test/deadline.test.js test/careers-page.test.js test/board-check.test.js"
   }
 }

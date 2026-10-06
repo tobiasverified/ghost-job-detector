@@ -809,3 +809,71 @@ test('a slow layoffs.fyi does not hold up the other sources', async () => {
   releaseFyi();
   assert.equal((await result).detected, false);
 });
+
+test('a layoffs.fyi timeout is a 5-minute "failed" marker, not a day-long miss', async () => {
+  const cache = new MemoryCache();
+  const writes = [];
+  const set = cache.set.bind(cache);
+  cache.set = async (key, payload, ttlMs, now) => {
+    writes.push({ key, payload, ttlMs });
+    return set(key, payload, ttlMs, now);
+  };
+  let fyiCalls = 0;
+  const deps = {
+    now: NOW,
+    cache,
+    layoffFyiTimeoutMs: 30,
+    fetch: async (url, init) => {
+      if (String(url).includes('wikidata.org')) {
+        return { ok: true, json: async () => ({ search: [] }) };
+      }
+
+      fyiCalls += 1;
+      // Like a sleeping instance: no answer before the timeout aborts it.
+      return new Promise((resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    },
+    searchNews: async () => [],
+    webSearch: async () => []
+  };
+
+  const started = Date.now();
+  const result = await detectLayoffs('Mayo Clinic', deps);
+  assert.ok(Date.now() - started < 1000, 'the lookup gives up at its timeout');
+  assert.equal(result.detected, false);
+
+  const marker = writes.find((item) => item.key.startsWith('layoffs:fyi:v3:'));
+  assert.deepEqual(marker.payload, { failed: true });
+  assert.equal(marker.ttlMs, 5 * 60 * 1000);
+
+  // Within the 5 minutes layoffs.fyi is not waited on again.
+  const callsBefore = fyiCalls;
+  await detectLayoffs('Mayo Clinic', { ...deps, now: new Date(NOW.getTime() + 60 * 1000) });
+  assert.equal(fyiCalls, callsBefore);
+
+  // After it, layoffs.fyi is tried again.
+  await detectLayoffs('Mayo Clinic', { ...deps, now: new Date(NOW.getTime() + 6 * 60 * 1000) });
+  assert.ok(fyiCalls > callsBefore);
+});
+
+test('a layoffs.fyi 404 is still remembered as a miss for a day', async () => {
+  const cache = new MemoryCache();
+  const writes = [];
+  const set = cache.set.bind(cache);
+  cache.set = async (key, payload, ttlMs, now) => {
+    writes.push({ key, payload, ttlMs });
+    return set(key, payload, ttlMs, now);
+  };
+  await detectLayoffs('Initech', {
+    now: NOW,
+    cache,
+    fetch: async () => fyi404(),
+    searchNews: async () => [],
+    webSearch: async () => []
+  });
+
+  const marker = writes.find((item) => item.key.startsWith('layoffs:fyi:v3:'));
+  assert.deepEqual(marker.payload, { miss: true });
+  assert.equal(marker.ttlMs, 24 * 60 * 60 * 1000);
+});

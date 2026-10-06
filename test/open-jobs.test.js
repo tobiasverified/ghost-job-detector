@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { resolveWorkforce } from '../lib/server/analyze.js';
-import { boardNameVerdict, boardTokenVerdict, parseAtsBoard, parseWorkdayBoard, resolveOpenJobCount, workdaySiteMatchesCompany } from '../lib/server/open-jobs.js';
+import { boardNameVerdict, boardTokenVerdict, checkCompanyCareers, parseAtsBoard, parseWorkdayBoard, resolveOpenJobCount, workdaySiteMatchesCompany } from '../lib/server/open-jobs.js';
 
 const NOW = new Date('2026-10-01T12:00:00Z');
 const UMIAMI_URL = 'https://umiami.wd1.myworkdayjobs.com/en-US/UMCareerStaff/details/Desktop-Support-Technician_R100101533?jobFamilyGroup=12a3cb6c735c10343a4fee7b7cc4da55';
@@ -359,7 +359,7 @@ test('a parent Workday tenant is accepted when the site slug is the company alia
       calls.push(String(url));
 
       if (!String(url).includes('/wday/cxs/')) {
-        throw new Error('the site slug should verify the board without reading the page title');
+        return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
       }
 
       assert.equal(JSON.parse(options.body).offset, 0);
@@ -381,7 +381,9 @@ test('a parent Workday tenant is accepted when the site slug is the company alia
   assert.equal(counted.source, 'workday');
   assert.equal(counted.estimated, false);
   assert.equal(counted.url, 'https://wwecorp.wd5.myworkdayjobs.com/en-US/TKO');
-  assert.deepEqual(calls, ['https://wwecorp.wd5.myworkdayjobs.com/wday/cxs/wwecorp/TKO/jobs']);
+  assert.deepEqual(calls.filter((url) => url.includes('/wday/cxs/')), [
+    'https://wwecorp.wd5.myworkdayjobs.com/wday/cxs/wwecorp/TKO/jobs'
+  ]);
 });
 
 function workdayDiscoveryDeps(log) {
@@ -415,7 +417,7 @@ function workdayDiscoveryDeps(log) {
   };
 }
 
-test('Workday discovery starts before the company profile has finished', async () => {
+test('no paid search runs while the company profile could still name a career board', async () => {
   const log = [];
   let finishProfile;
   const profile = new Promise((resolve) => {
@@ -424,32 +426,76 @@ test('Workday discovery starts before the company profile has finished', async (
   const counting = resolveOpenJobCount('TKO Group Holdings', { profile }, workdayDiscoveryDeps(log));
 
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(log.includes('search'), 'discovery should be running while the profile is pending');
-  log.push('profile');
+  assert.equal(log.includes('search'), false, 'Workday discovery must wait for the free sources');
   finishProfile({ website: 'https://tkogrp.com', openJobs: 5 });
 
   const counted = await counting;
   assert.equal(counted.count, 842);
   assert.equal(counted.source, 'workday');
-  assert.ok(log.indexOf('search') < log.indexOf('profile'));
 });
 
-test('a career board on the profile website still outranks a faster Workday discovery', async () => {
+test('a career board on the profile website wins, and Workday discovery is never searched', async () => {
   const log = [];
-  let finishProfile;
-  const profile = new Promise((resolve) => {
-    finishProfile = resolve;
-  });
-  const counting = resolveOpenJobCount('TKO Group Holdings', { profile }, workdayDiscoveryDeps(log));
+  const counted = await resolveOpenJobCount('TKO Group Holdings', {
+    profile: Promise.resolve({ website: 'https://boards.greenhouse.io/tko', openJobs: 5 })
+  }, workdayDiscoveryDeps(log));
 
-  // Discovery finishes completely before the profile arrives.
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.ok(log.includes('workday'));
-  finishProfile({ website: 'https://boards.greenhouse.io/tko', openJobs: 5 });
-
-  const counted = await counting;
   assert.equal(counted.count, 2);
   assert.equal(counted.source, 'greenhouse');
+  assert.equal(log.includes('search'), false);
+});
+
+test('a direct board slug that answers means no Tavily search is made', async () => {
+  const searches = [];
+  const counted = await resolveOpenJobCount('Asana', {
+    profile: Promise.resolve({ website: 'https://asana.com', openJobs: 40 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async (query) => {
+      searches.push(query);
+      return [];
+    },
+    fetch: async (url) => {
+      const href = String(url);
+
+      if (href === 'https://boards-api.greenhouse.io/v1/boards/asana') {
+        return { ok: true, status: 200, async json() { return { name: 'Asana' }; } };
+      }
+
+      if (href === 'https://boards-api.greenhouse.io/v1/boards/asana/jobs') {
+        return { ok: true, status: 200, async json() { return { jobs: Array.from({ length: 97 }, (_, id) => ({ id })) }; } };
+      }
+
+      return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
+    }
+  });
+
+  assert.equal(counted.count, 97);
+  assert.equal(counted.source, 'greenhouse');
+  assert.deepEqual(searches, []);
+});
+
+test('a Lever or Ashby slug with no board is ruled out by its jobs API without loading the board page', async () => {
+  const pages = [];
+  await resolveOpenJobCount('Asana', {
+    profile: Promise.resolve({ website: 'https://asana.com' })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async () => [],
+    fetch: async (url) => {
+      const href = String(url);
+
+      if (href.startsWith('https://jobs.lever.co/') || href.startsWith('https://jobs.ashbyhq.com/')) {
+        pages.push(href);
+      }
+
+      return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
+    }
+  });
+
+  assert.deepEqual(pages, []);
 });
 
 test('Glassdoor open jobs from the profile are used only after discovery comes up empty', async () => {
@@ -595,11 +641,16 @@ test('S3: two verified boards make the larger one a lower bound', async () => {
   }, boardSearchDeps({
     results: [
       { title: 'Spring Health Jobs', url: `https://jobs.ashbyhq.com/${SPRING_BOARD}` },
-      { title: 'Spring Health', url: 'https://boards.greenhouse.io/springhealth' }
+      { title: 'Spring Health', url: 'https://jobs.ashbyhq.com/11111111-1111-1111-1111-111111111111' }
     ],
-    pages: { [`https://jobs.ashbyhq.com/${SPRING_BOARD}`]: 'Spring Health Jobs' },
-    greenhouse: { springhealth: 'Spring Health' },
-    jobs: { [`ashby:${SPRING_BOARD}`]: 67, 'greenhouse:springhealth': 20 }
+    pages: {
+      [`https://jobs.ashbyhq.com/${SPRING_BOARD}`]: 'Spring Health Jobs',
+      'https://jobs.ashbyhq.com/11111111-1111-1111-1111-111111111111': 'Spring Health Jobs'
+    },
+    jobs: {
+      [`ashby:${SPRING_BOARD}`]: 67,
+      'ashby:11111111-1111-1111-1111-111111111111': 20
+    }
   }));
 
   assert.equal(counted.count, 67);
@@ -638,6 +689,22 @@ test('Spring Health shape: 3,001 employees and Glassdoor 5 reads as a floor, not
 
   assert.equal(workforce.score, 0);
   assert.equal(workforce.label, '3,001 employees / 5+ open roles listed on Glassdoor = at least 0.0017:1');
+});
+
+test('Target shape: Glassdoor\'s floor over a capped Workday board names its source and the cap', () => {
+  const workforce = resolveWorkforce({
+    employees: 400000,
+    employeeLabel: '400,000',
+    openJobs: 12089,
+    openJobsSource: 'glassdoor',
+    openJobsLowerBound: true,
+    openJobsScope: 'glassdoor_listings',
+    openJobsWorkdayCapped: true
+  });
+
+  assert.equal(workforce.score, 0);
+  assert.equal(workforce.label, '400,000 employees / 12,089+ open roles listed on Glassdoor = at least 0.03:1');
+  assert.match(workforce.detail, /more than the company's Workday board shows \(Workday stops counting at 2,000\)/);
 });
 
 function citationDeps({ results, answer }) {
@@ -1010,6 +1077,249 @@ test('a verified Greenhouse board is title-matched from the jobs fetch and not r
       dropped: [],
       introduced: []
     });
+    assert.deepEqual(lines[0].dropped, []);
+    assert.deepEqual(lines[0].introduced, []);
+    assert.equal(counted.careers, null);
+  } finally {
+    console.info = original;
+  }
+});
+
+test('a Discord vendor listing is flagged and Cloudflare Egress is not', async () => {
+  const lines = [];
+  const original = console.info;
+  console.info = (message, details) => {
+    if (message === '[GHD] careers check') {
+      lines.push(details);
+    }
+  };
+
+  const discordJobs = Array.from({ length: 84 }, (_, index) => ({
+    id: index + 1,
+    title: `Account Executive ${index + 1}`
+  }));
+  let fetches = 0;
+  const cache = new MemoryCache();
+  const discordFetch = async () => {
+    fetches += 1;
+    return {
+      ok: true,
+      async json() {
+        return { jobs: discordJobs };
+      }
+    };
+  };
+
+  try {
+    const vendor = await resolveOpenJobCount('Discord', {
+      website: 'https://boards.greenhouse.io/discord',
+      jobTitle: 'Java Developer'
+    }, {
+      now: NOW,
+      cache,
+      webSearch: async () => {
+        throw new Error('the open-roles fetch is reused');
+      },
+      fetch: discordFetch
+    });
+
+    assert.equal(fetches, 1);
+    assert.equal(vendor.careersChecked, true);
+    assert.equal(vendor.titles, undefined);
+    assert.deepEqual(vendor.careers, {
+      show: true,
+      text: '⚠️ Not found on the company\'s careers board',
+      tooltip: 'Checked Greenhouse board, 84 jobs'
+    });
+    assert.equal(lines.at(-1).outcome, 'not found');
+    assert.ok(lines.at(-1).dropped.includes('java'));
+    assert.ok(lines.at(-1).dropped.includes('developer'));
+    assert.ok(lines.at(-1).introduced.includes('account'));
+    assert.ok(lines.at(-1).introduced.includes('executive'));
+
+    const again = await checkCompanyCareers('Discord', { jobTitle: 'Java Developer' }, {
+      now: NOW,
+      cache,
+      fetch: discordFetch,
+      webSearch: async () => {
+        throw new Error('a cached board is not fetched again');
+      }
+    });
+
+    assert.equal(fetches, 1);
+    assert.deepEqual(again, vendor.careers);
+
+    const cloudflare = await resolveOpenJobCount('Cloudflare', {
+      website: 'https://boards.greenhouse.io/cloudflare',
+      jobTitle: 'Software Engineer - Egress (Go/Rust)'
+    }, {
+      now: NOW,
+      cache: new MemoryCache(),
+      webSearch: async () => {
+        throw new Error('no extra search');
+      },
+      fetch: async () => ({
+        ok: true,
+        async json() {
+          return { jobs: [{ id: 1, title: 'Senior Software Engineer - Egress (Go/Rust)' }] };
+        }
+      })
+    });
+
+    assert.equal(cloudflare.careers, null);
+    assert.equal(cloudflare.careersChecked, true);
+    assert.equal(lines.at(-1).outcome, 'found');
+    assert.deepEqual(lines.at(-1).dropped, []);
+    assert.deepEqual(lines.at(-1).introduced, []);
+
+    const workday = await resolveOpenJobCount('Discord', {
+      jobTitle: 'Java Developer'
+    }, {
+      now: NOW,
+      cache: {
+        async get() {
+          return { count: 74, source: 'workday', titles: ['Java Developer'] };
+        },
+        async set() {
+          throw new Error('cache hit');
+        }
+      },
+      webSearch: async () => {
+        throw new Error('workday does not search');
+      },
+      fetch: async () => {
+        throw new Error('workday does not fetch');
+      }
+    });
+
+    assert.equal(workday.careers, null);
+    assert.equal(workday.careersChecked, true);
+    assert.equal(lines.at(-1).outcome, 'board unverified');
+  } finally {
+    console.info = original;
+  }
+});
+
+function recordingCache() {
+  const cache = new MemoryCache();
+  const writes = [];
+  const set = cache.set.bind(cache);
+  cache.set = async (key, payload, ttlMs, now) => {
+    writes.push({ key, payload, ttlMs });
+    return set(key, payload, ttlMs, now);
+  };
+  return { cache, writes };
+}
+
+test('a timed-out board search does not keep the Glassdoor floor for a day', async () => {
+  const { cache, writes } = recordingCache();
+  let searches = 0;
+  const deps = {
+    cache,
+    fetch: async () => ({ ok: false, status: 404, async json() { return {}; }, async text() { return ''; } }),
+    webSearch: async (query) => {
+      searches += 1;
+      if (String(query).includes('myworkdayjobs')) {
+        return [];
+      }
+      throw new Error('The operation was aborted due to timeout');
+    }
+  };
+  const counted = await resolveOpenJobCount('Airbnb', {
+    glassdoorOpenJobs: 28,
+    jobTitle: 'Policy Manager, Quality'
+  }, { ...deps, now: NOW });
+
+  assert.equal(counted.count, 28);
+  assert.equal(counted.source, 'glassdoor');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].key, 'open_jobs_v16_airbnb');
+  assert.equal(writes[0].payload.tier, 'glassdoor');
+  assert.equal(writes[0].payload.higherTierFailed, true);
+  assert.equal(writes[0].ttlMs, 5 * 60 * 1000);
+
+  const again = await resolveOpenJobCount('Airbnb', {
+    glassdoorOpenJobs: 28
+  }, { ...deps, now: new Date(NOW.getTime() + 60 * 1000) });
+  assert.equal(again.count, 28);
+  assert.equal(searches, 2);
+
+  await resolveOpenJobCount('Airbnb', {
+    glassdoorOpenJobs: 28
+  }, { ...deps, now: new Date(NOW.getTime() + 6 * 60 * 1000) });
+  assert.ok(searches > 2);
+});
+
+test('Airbnb resolves to its Greenhouse board from the company slug', async () => {
+  const { cache, writes } = recordingCache();
+  const urls = [];
+  const counted = await resolveOpenJobCount('Airbnb', {
+    jobTitle: 'Policy Manager, Quality'
+  }, {
+    now: NOW,
+    cache,
+    webSearch: async () => {
+      throw new Error('search should not run after the direct token');
+    },
+    fetch: async (url) => {
+      urls.push(String(url));
+      if (url === 'https://boards-api.greenhouse.io/v1/boards/airbnb') {
+        return { ok: true, status: 200, async json() { return { name: 'Airbnb' }; } };
+      }
+      if (url === 'https://boards-api.greenhouse.io/v1/boards/airbnb/jobs') {
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { jobs: Array.from({ length: 154 }, (_, id) => ({ id, title: `Role ${id}` })) };
+          }
+        };
+      }
+      return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
+    }
+  });
+
+  assert.equal(counted.count, 154);
+  assert.equal(counted.source, 'greenhouse');
+  assert.equal(counted.url, 'https://boards.greenhouse.io/airbnb');
+  assert.ok(urls.includes('https://boards-api.greenhouse.io/v1/boards/airbnb/jobs'));
+  assert.equal(writes[0].payload.tier, 'direct-token');
+  assert.equal(writes[0].payload.higherTierFailed, false);
+  assert.equal(writes[0].ttlMs, 24 * 60 * 60 * 1000);
+});
+
+test('a guessed slug whose board name is a different company is rejected', async () => {
+  const urls = [];
+  const lines = [];
+  const original = console.info;
+  console.info = (message, details) => {
+    if (message === '[GHD] open jobs board token') {
+      lines.push(details);
+    }
+  };
+
+  try {
+    const counted = await resolveOpenJobCount('Acme', {
+      jobTitle: 'Engineer'
+    }, {
+      now: NOW,
+      cache: new MemoryCache(),
+      webSearch: async () => [],
+      fetch: async (url) => {
+        urls.push(String(url));
+        if (url === 'https://boards-api.greenhouse.io/v1/boards/acme') {
+          return { ok: true, status: 200, async json() { return { name: 'Globex' }; } };
+        }
+        if (String(url).endsWith('/jobs')) {
+          throw new Error('a mismatched board must not be counted');
+        }
+        return { ok: false, status: 404, async json() { return {}; }, async text() { return ''; } };
+      }
+    });
+
+    assert.equal(counted, null);
+    assert.equal(lines[0].candidates.find((item) => item.board === 'greenhouse:acme').reason, 'different organization');
+    assert.equal(urls.some((url) => url.endsWith('/jobs')), false);
   } finally {
     console.info = original;
   }

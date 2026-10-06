@@ -232,6 +232,72 @@ test('a full check with fewer than two informative factors shows no score', asyn
   assert.match(scoredPage.panel.innerHTML, /class="number"/);
   assert.doesNotMatch(scoredPage.panel.innerHTML, /Not enough data to score/);
   assert.match(scoredPage.panel.innerHTML, /No duplicate found/);
+  assert.doesNotMatch(scoredPage.panel.innerHTML, /Some checks took too long/);
+  assert.doesNotMatch(scoredPage.panel.innerHTML, /id="ghd-retry"/);
+});
+
+test('a withheld response shows no score and keeps finished rows for a retry', async () => {
+  const page = loadWidget();
+  const detail = 'Took too long to check. Try again in a few minutes.';
+
+  await page.widget.analyze(jobA);
+  page.click('ghd-full');
+  await flush();
+  page.reply(0, {
+    ghostScore: null,
+    label: null,
+    scoreWithheld: true,
+    partial: true,
+    factors: {
+      vagueness: { score: 0, label: 'Clear' },
+      layoffs: { detected: false, unavailable: true, timedOut: true, score: 0, detail },
+      reviews: { rating: 4.1, platform: 'Glassdoor', score: 8, unavailable: false },
+      hiringRatio: { available: true, employees: 100, openRoles: 4, ratio: 0.04, score: 0 },
+      reposts: { pending: true, score: 0, unavailable: true, available: false }
+    }
+  });
+  await flush();
+  page.reply(1, {
+    factors: { reposts: { score: 40, unavailable: false, available: true, matches: [] } }
+  });
+  await flush();
+
+  const withheld = page.panel.innerHTML;
+  assert.match(withheld, /Some checks took too long/);
+  assert.match(withheld, /id="ghd-retry"/);
+  assert.match(withheld, /4\.1 \/ 5 on Glassdoor/);
+  assert.match(withheld, /Check unavailable/);
+  assert.match(withheld, new RegExp(detail.replace(/[.]/g, '\\.')));
+  assert.doesNotMatch(withheld, /class="number"/);
+  assert.doesNotMatch(withheld, /stroke-dasharray/);
+  assert.doesNotMatch(withheld, /Not enough data to score/);
+
+  page.click('ghd-retry');
+  await flush();
+  assert.match(page.panel.innerHTML, /4\.1 \/ 5 on Glassdoor/);
+  assert.match(page.panel.innerHTML, /Took too long to check/);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 2);
+
+  page.reply(2, {
+    ghostScore: 4,
+    label: 'Ghost Job: Unlikely',
+    factors: {
+      vagueness: { score: 0, label: 'Clear' },
+      layoffs: { unavailable: false, detected: false, score: 0 },
+      reviews: { rating: 4.1, platform: 'Glassdoor', score: 0, unavailable: false },
+      hiringRatio: { available: false, score: 0 },
+      reposts: { pending: true, score: 0, unavailable: true, available: false }
+    }
+  });
+  await flush();
+  page.reply(3, {
+    factors: { reposts: { unavailable: false, available: true, score: 0, detail: 'No other LinkedIn posting matched this role.' } }
+  });
+  await flush();
+
+  assert.match(page.panel.innerHTML, /class="number"/);
+  assert.doesNotMatch(page.panel.innerHTML, /Some checks took too long/);
+  assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
 });
 
 test('a Workday check sends the resolved company name', async () => {
@@ -260,6 +326,92 @@ test('a Workday check sends the resolved company name', async () => {
   page.reply(0, remoteAnalysis(4.3));
   page.reply(1, remoteAnalysis(4.3));
   await flush();
+});
+
+test('a Discord vendor listing shows the careers line and Cloudflare Egress does not', async () => {
+  const notice = {
+    show: true,
+    text: '⚠️ Not found on the company\'s careers board',
+    tooltip: 'Checked Greenhouse board, 84 jobs'
+  };
+  const discord = loadWidget();
+  const vendor = {
+    jobId: 'discord-vendor',
+    title: 'Java Developer',
+    company: 'Discord',
+    description,
+    url: 'https://www.linkedin.com/jobs/view/discord-vendor'
+  };
+
+  await discord.widget.analyze(vendor);
+  discord.click('ghd-full');
+  await flush();
+  discord.reply(0, { ...remoteAnalysis(4), careers: notice, careersChecked: true });
+  discord.reply(1, remoteAnalysis(4));
+  await flush();
+
+  const shown = discord.panel.innerHTML;
+  const repostsAt = shown.indexOf('Reposts');
+  const lineAt = shown.indexOf('⚠️ Not found on the company\'s careers board');
+
+  assert.ok(repostsAt > -1);
+  assert.ok(lineAt > repostsAt);
+  assert.match(shown, /title="Checked Greenhouse board, 84 jobs"/);
+  assert.equal(discord.sent.some((message) => message.type === 'CAREERS_JOB'), false);
+
+  const cloudflare = loadWidget();
+  await cloudflare.widget.analyze({
+    jobId: 'cf-egress',
+    title: 'Software Engineer - Egress (Go/Rust)',
+    company: 'Cloudflare',
+    description,
+    url: 'https://www.linkedin.com/jobs/view/cloudflare-egress'
+  });
+  cloudflare.click('ghd-full');
+  await flush();
+  cloudflare.reply(0, { ...remoteAnalysis(4), careers: null, careersChecked: true });
+  cloudflare.reply(1, remoteAnalysis(4));
+  await flush();
+
+  assert.doesNotMatch(cloudflare.panel.innerHTML, /Not found on the company's careers board/);
+  assert.equal(cloudflare.sent.some((message) => message.type === 'CAREERS_JOB'), false);
+  assert.equal(
+    shown.match(/class="number">(\d+)/)?.[1],
+    cloudflare.panel.innerHTML.match(/class="number">(\d+)/)?.[1]
+  );
+});
+
+test('the careers line is requested after the card renders when the board was not checked', async () => {
+  const page = loadWidget();
+  const notice = {
+    show: true,
+    text: '⚠️ Not found on the company\'s careers board',
+    tooltip: 'Checked Greenhouse board, 84 jobs'
+  };
+
+  await page.widget.analyze({
+    jobId: 'discord-later',
+    title: 'Java Developer',
+    company: 'Discord',
+    description,
+    url: 'https://www.linkedin.com/jobs/view/discord-later'
+  });
+  page.click('ghd-full');
+  await flush();
+  page.reply(0, { ...remoteAnalysis(4), careersChecked: false });
+  page.reply(1, remoteAnalysis(4));
+  await flush();
+
+  assert.equal(page.sent[2]?.type, 'CAREERS_JOB');
+  assert.equal(page.sent[2].body.title, 'Java Developer');
+  assert.equal(page.sent[2].body.company, 'Discord');
+  assert.doesNotMatch(page.panel.innerHTML, /Not found on the company's careers board/);
+
+  page.reply(2, notice);
+  await flush();
+
+  assert.match(page.panel.innerHTML, /Not found on the company's careers board/);
+  assert.match(page.panel.innerHTML, /title="Checked Greenhouse board, 84 jobs"/);
 });
 
 test('a full check that finishes after switching jobs is kept and shown on coming back', async () => {

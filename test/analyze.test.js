@@ -463,7 +463,7 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   });
 
   assert.equal(FACTOR_VERSIONS.reposts, 'v3');
-  assert.match(analysisCacheKey(job), /^analyze:v24:/);
+  assert.match(analysisCacheKey(job), /^analyze:v25:/);
   const first = await analyzeJobPosting(job, deps);
   assert.equal(first.cached, false);
   assert.equal(first.factorVersions.reposts, 'v3');
@@ -502,4 +502,141 @@ test('a glassdoor profile keeps its review count and drops a missing one', async
   assert.equal(missing.rating, 3.7);
   assert.equal(missing.reviewCount, null);
   assert.equal(zero.reviewCount, null);
+});
+
+// The rate check now runs alongside the factors. These pin what that may and
+// may not do while the decision is pending.
+function slowRateLimit(allowed, delayMs = 30) {
+  return {
+    async consume() {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      return { allowed, count: allowed ? 1 : 51, limit: 50 };
+    }
+  };
+}
+
+function recordingDeps(log) {
+  const writes = [];
+  const cache = new MemoryCache();
+  const set = cache.set.bind(cache);
+  cache.set = async (...args) => {
+    writes.push(args[0]);
+    return set(...args);
+  };
+
+  return {
+    writes,
+    overrides: {
+      now: NOW,
+      cache,
+      env: { RAPIDAPI_KEY: 'rapid-test', GROQ_API_KEY: 'groq-test' },
+      searchNews: async () => {
+        log.push('paid:newsdata');
+        return [];
+      },
+      webSearch: async () => {
+        log.push('paid:tavily');
+        return [];
+      },
+      askGroq: async () => {
+        log.push('paid:groq');
+        return 'UNKNOWN';
+      },
+      fetch: async (url) => {
+        const host = new URL(String(url)).hostname;
+        log.push(/rapidapi\.com$/.test(host) ? `paid:${host}` : `free:${host}`);
+        return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      }
+    }
+  };
+}
+
+const gateJob = {
+  title: 'Analyst',
+  company: 'Initech',
+  description: 'You will build Python services with 5 years of experience. Salary $150,000. Specific duties are listed for each quarter.',
+  url: 'https://www.linkedin.com/jobs/view/101',
+  platform: 'LINKEDIN',
+  deferReposts: true
+};
+
+test('a rejected request gets 429 with no results, no paid calls and no cache writes', async () => {
+  const log = [];
+  const { writes, overrides } = recordingDeps(log);
+  const handler = createAnalyzeHandler({ ...overrides, rateLimit: slowRateLimit(false) });
+  const res = mockResponse();
+
+  await handler(mockRequest(gateJob), res);
+  // Let any factor work still in flight settle before checking.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(res.statusCode, 429);
+  assert.equal(res.body.factors, undefined);
+  assert.equal(res.body.ghostScore, undefined);
+  assert.deepEqual(log.filter((item) => item.startsWith('paid:')), []);
+  assert.deepEqual(writes, []);
+});
+
+test('free reads start while the rate check is pending; paid calls wait for it', async () => {
+  const log = [];
+  const { overrides } = recordingDeps(log);
+  const order = [];
+  const decided = slowRateLimit(true, 40);
+  const handler = createAnalyzeHandler({
+    ...overrides,
+    rateLimit: {
+      async consume(...args) {
+        const result = await decided.consume(...args);
+        order.push('decided');
+        return result;
+      }
+    },
+    fetch: async (url, init) => {
+      const host = new URL(String(url)).hostname;
+      order.push(/rapidapi\.com$/.test(host) ? 'paid' : 'free');
+      return overrides.fetch(url, init);
+    }
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest(gateJob), res);
+
+  assert.equal(res.statusCode, 200);
+  assert.ok(res.body.factors);
+  const decidedAt = order.indexOf('decided');
+  assert.ok(order.indexOf('free') >= 0 && order.indexOf('free') < decidedAt, `free work should start before the decision: ${order.join(',')}`);
+  assert.ok(order.indexOf('paid') === -1 || order.indexOf('paid') > decidedAt, `paid calls must follow the decision: ${order.join(',')}`);
+});
+
+test('reviews uses the validated Glassdoor rating without waiting for the headcount merge', async () => {
+  const { createTrace } = await import('../lib/server/trace.js');
+  const trace = createTrace('test');
+  const ends = {};
+  const span = trace.span;
+  trace.span = (name, work) => span(name, work).finally(() => {
+    ends[name] = Date.now();
+  });
+  const deps = layoffDeps({
+    trace,
+    // The rating is final at once; the headcount (a paid search) takes 300ms more.
+    lookupCompanyRating: async (company, options) => {
+      options.onGlassdoorFields?.({ website: 'https://acme.example', openJobs: 12, glassdoorSize: '10000+ Employees', overall: 4.2, reviewCount: 900 });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      return { overall: 4.2, reviewCount: 900, employees: 50000, employeeLabel: '50,000', openJobs: 12, website: 'https://acme.example' };
+    }
+  });
+
+  const analysis = await analyzeJobPosting({
+    title: 'Analyst',
+    company: 'Acme',
+    description: 'You will build Python services with 5 years of experience. Salary $150,000. Specific duties are listed for each quarter.',
+    url: 'https://www.linkedin.com/jobs/view/1',
+    platform: 'LINKEDIN',
+    deferReposts: true
+  }, deps);
+
+  assert.equal(analysis.factors.reviews.rating, 4.2);
+  const profileEnd = ends['factor: company profile (glassdoor+headcount)'];
+  const reviewsEnd = ends['factor: reviews'];
+  assert.ok(reviewsEnd + 200 < profileEnd, `reviews ended ${profileEnd - reviewsEnd}ms before the profile; expected about 300ms`);
 });

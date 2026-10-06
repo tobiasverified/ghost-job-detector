@@ -496,6 +496,27 @@ async function enrichReposts(message) {
   };
 }
 
+async function enrichCareers(message) {
+  const body = message.body || {};
+  const base = await apiBase();
+  const response = await fetch(`${base}/api/careers-check`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-GHD-Client': 'ghost-job-detector'
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`API_${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload.careers || null;
+}
+
 async function resolveCompanyIdentity(body) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/company-identity`, {
@@ -580,6 +601,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ENRICH_JOB') {
     enrichJob(message)
       .then((analysis) => sendResponse({ ok: true, analysis }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'CAREERS_JOB') {
+    enrichCareers(message)
+      .then((careers) => sendResponse({ ok: true, careers }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }
