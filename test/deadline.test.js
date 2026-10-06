@@ -37,10 +37,11 @@ function recordingCache() {
 }
 
 // Every source answers at once unless a test makes one slow or endless.
-function deps({ cache = new MemoryCache(), lookup, layoffs, news, searches = [] } = {}) {
+function deps({ cache = new MemoryCache(), lookup, layoffs, news, searches = [], ratioEnabled = false } = {}) {
   const base = {
     now: NOW,
     cache,
+    ratioEnabled,
     // NewsData is used by layoffs only, so it can hold layoffs alone.
     searchNews: async () => (news ? news() : []),
     webSearch: async (query) => {
@@ -83,7 +84,7 @@ test('reviews unfinished at the deadline: unavailable, score withheld', async ()
 
 test('open roles held past the deadline falls back to the floor and keeps the score', async () => {
   const { cache, writes } = recordingCache();
-  const held = deps({ cache, layoffs: async () => [] });
+  const held = deps({ cache, layoffs: async () => [], ratioEnabled: true });
   // Open roles reads the job-board APIs first; hold only those, so layoffs.fyi
   // and everything else still answer.
   const fetchImpl = held.fetch;
@@ -107,6 +108,7 @@ test('open roles held past the deadline falls back to the floor and keeps the sc
 
 test('headcount unfinished: the ratio is unscored and the score still shows', async () => {
   const analysis = await analyzeJobPosting(JOB, deps({
+    ratioEnabled: true,
     layoffs: async () => [],
     lookup: async (company, options) => {
       // The Glassdoor rating is final; the headcount merge never finishes.
@@ -148,7 +150,7 @@ test('a check that finishes in time is unchanged: full score, not partial, norma
 
 test('a retry within 5 minutes completes open roles instead of replaying the cached partial', async () => {
   const cache = new MemoryCache();
-  const held = deps({ cache, layoffs: async () => [] });
+  const held = deps({ cache, layoffs: async () => [], ratioEnabled: true });
   const fetchImpl = held.fetch;
   held.fetch = async (url, init) => (/boards-api\.greenhouse\.io|api\.lever\.co|api\.ashbyhq\.com|jobs\.lever\.co|jobs\.ashbyhq\.com/.test(String(url)) ? never() : fetchImpl(url, init));
   const first = await analyzeJobPosting(JOB, held);
@@ -157,7 +159,7 @@ test('a retry within 5 minutes completes open roles instead of replaying the cac
 
   // One minute later the board answers.
   const retry = await analyzeJobPosting(JOB, {
-    ...deps({ cache, layoffs: async () => [] }),
+    ...deps({ cache, layoffs: async () => [], ratioEnabled: true }),
     now: new Date(NOW.getTime() + 60 * 1000),
     fetch: async (url) => (String(url).startsWith('https://boards-api.greenhouse.io/v1/boards/acme')
       ? (String(url).endsWith('/jobs')

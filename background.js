@@ -32,11 +32,11 @@ function filesForUrl(rawUrl) {
   }
 
   if (page === 'linkedin') {
-    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/widget.js', 'content.js'];
+    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.cjs', 'lib/widget.js', 'content.js'];
   }
 
   if (page === 'workday') {
-    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/widget.js', 'content/workday.js'];
+    return ['lib/company-headcount.js', 'lib/job-page.js', 'lib/heuristics.js', 'lib/pay.cjs', 'lib/widget.js', 'content/workday.js'];
   }
 
   return null;
@@ -496,6 +496,30 @@ async function enrichReposts(message) {
   };
 }
 
+async function enrichPay(message) {
+  const body = message.body || {};
+  const base = await apiBase();
+  const response = await fetch(`${base}/api/pay-vs-market`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-GHD-Client': 'ghost-job-detector'
+    },
+    body: JSON.stringify({
+      title: body.title || '',
+      location: body.locationNormalized || body.location || '',
+      salary: body.salary || ''
+    }),
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`API_${response.status}`);
+  }
+
+  return response.json();
+}
+
 async function enrichCareers(message) {
   const body = message.body || {};
   const base = await apiBase();
@@ -608,6 +632,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'CAREERS_JOB') {
     enrichCareers(message)
       .then((careers) => sendResponse({ ok: true, careers }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'PAY_MARKET') {
+    enrichPay(message)
+      .then((pay) => sendResponse({ ok: true, pay }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

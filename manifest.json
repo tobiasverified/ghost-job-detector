@@ -29,12 +29,12 @@
         "*://*.linkedin.com/jobs/search?*",
         "*://linkedin.com/jobs/*"
       ],
-      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/widget.js", "content.js"],
+      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/pay.cjs", "lib/widget.js", "content.js"],
       "run_at": "document_idle"
     },
     {
       "matches": ["*://*.myworkdayjobs.com/*"],
-      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/widget.js", "content/workday.js"],
+      "js": ["lib/company-headcount.js", "lib/job-page.js", "lib/heuristics.js", "lib/pay.cjs", "lib/widget.js", "content/workday.js"],
       "run_at": "document_idle"
     },
     {

@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // A small stand-in for the page: the panel's HTML is kept as a string, and
 // buttons found by id can be clicked from the test.
-function loadWidget() {
+function loadWidget({ holdPay = false } = {}) {
   const handlers = new Map();
   const panel = { innerHTML: '' };
   const stored = {};
@@ -88,6 +88,11 @@ function loadWidget() {
       runtime: {
         sendMessage(message) {
           sent.push(message);
+
+          if (message.type === 'PAY_MARKET' && !holdPay) {
+            return Promise.resolve({ ok: false });
+          }
+
           return new Promise((resolve) => pendingReplies.push(resolve));
         }
       }
@@ -97,6 +102,7 @@ function loadWidget() {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(new URL('../lib/heuristics.js', import.meta.url), 'utf8'), sandbox);
+  vm.runInContext(readFileSync(new URL('../lib/pay.cjs', import.meta.url), 'utf8'), sandbox);
   vm.runInContext(readFileSync(new URL('../lib/widget.js', import.meta.url), 'utf8'), sandbox);
 
   return {
@@ -110,7 +116,10 @@ function loadWidget() {
       handler();
     },
     reply(index, analysis) {
-      pendingReplies[index]({ ok: true, analysis });
+      pendingReplies[index]({ ok: true, analysis, pay: analysis });
+    },
+    fail(index) {
+      pendingReplies[index]({ ok: false });
     }
   };
 }
@@ -687,4 +696,133 @@ test('the review row shows a count only when the payload has one', async () => {
     { score: 0, unavailable: false }
   ).find((factor) => factor.label === 'Company Reviews');
   assert.equal(row.value, '3.7 / 5 on Glassdoor');
+});
+
+const payDescription = 'You will build Python services with 5 years of experience. Specific duties are listed for each quarter of the year.';
+
+function payJob(extra) {
+  return {
+    jobId: 'pay-job',
+    title: 'Data Scientist',
+    company: 'Northwind',
+    description: payDescription,
+    url: 'https://www.linkedin.com/jobs/view/pay-job',
+    locationNormalized: 'Hartford, CT',
+    ...extra
+  };
+}
+
+async function finishCheck(page, body = remoteAnalysis(4.2)) {
+  page.click('ghd-full');
+  await flush();
+  page.reply(0, body);
+  await flush();
+  page.reply(1, body);
+  await flush();
+}
+
+test('pay vs market stays on the posted range until the comparison returns', async () => {
+  const missing = loadWidget({ holdPay: true });
+  await missing.widget.analyze(payJob({ jobId: 'no-pay', salary: '' }));
+  assert.match(missing.panel.innerHTML, /Pay vs market/);
+  assert.match(missing.panel.innerHTML, /Salary not listed/);
+  await finishCheck(missing);
+  assert.equal(missing.sent.some((message) => message.type === 'PAY_MARKET'), false);
+  assert.match(missing.panel.innerHTML, /Salary not listed/);
+
+  const listed = loadWidget({ holdPay: true });
+  await listed.widget.analyze(payJob({ salary: '$130k - $160k' }));
+  assert.match(listed.panel.innerHTML, /Listed \$130-160K/);
+  assert.equal(listed.sent.some((message) => message.type === 'PAY_MARKET'), false);
+
+  listed.click('ghd-full');
+  await flush();
+  assert.equal(listed.sent.some((message) => message.type === 'PAY_MARKET'), false);
+  listed.reply(0, remoteAnalysis(4.2));
+  await flush();
+
+  const payMessage = listed.sent.find((message) => message.type === 'PAY_MARKET');
+  assert.equal(payMessage.body.title, 'Data Scientist');
+  assert.equal(payMessage.body.locationNormalized, 'Hartford, CT');
+  assert.equal(payMessage.body.salary, '$130k - $160k');
+  assert.match(listed.panel.innerHTML, /Listed \$130-160K/);
+  assert.doesNotMatch(listed.panel.innerHTML, /Market median/);
+
+  listed.reply(1, remoteAnalysis(4.2));
+  await flush();
+  const before = listed.panel.innerHTML.match(/class="number">(\d+)/)?.[1];
+  listed.reply(2, {
+    compared: true,
+    text: 'Listed $130-160K · Market median $142K for this title in Hartford (80 reports)',
+    note: 'within the range'
+  });
+  await flush();
+
+  assert.match(listed.panel.innerHTML, /Listed \$130-160K · Market median \$142K for this title in Hartford \(80 reports\)/);
+  assert.match(listed.panel.innerHTML, /within the range/);
+  assert.equal(listed.panel.innerHTML.match(/class="number">(\d+)/)?.[1], before);
+
+  const failed = loadWidget({ holdPay: true });
+  await failed.widget.analyze(payJob({ jobId: 'pay-fail', salary: '$130,000 - $160,000' }));
+  await finishCheck(failed);
+  failed.fail(2);
+  await flush();
+  assert.match(failed.panel.innerHTML, /Listed \$130-160K/);
+  assert.doesNotMatch(failed.panel.innerHTML, /Market median/);
+});
+
+test('pay vs market uses the three placement phrases and keeps each job separate', async () => {
+  const phrases = [
+    ['$80,000', 'below the 25th percentile'],
+    ['$130,000 - $160,000', 'within the range'],
+    ['$200,000', 'above the 75th']
+  ];
+
+  for (const [salary, note] of phrases) {
+    const page = loadWidget({ holdPay: true });
+    await page.widget.analyze(payJob({ jobId: note, salary }));
+    await finishCheck(page);
+    page.reply(2, {
+      compared: true,
+      text: `Listed pay · Market median $142K for this title in Hartford (80 reports)`,
+      note
+    });
+    await flush();
+    assert.match(page.panel.innerHTML, new RegExp(note.replace(/[.]/g, '\\.')));
+  }
+
+  const page = loadWidget({ holdPay: true });
+  const first = payJob({
+    jobId: 'job-a',
+    company: 'Northwind',
+    salary: '$200,000',
+    url: 'https://www.linkedin.com/jobs/view/job-a'
+  });
+  const second = payJob({
+    jobId: 'job-b',
+    company: 'Contoso',
+    salary: '',
+    url: 'https://www.linkedin.com/jobs/view/job-b'
+  });
+
+  await page.widget.analyze(first);
+  await finishCheck(page);
+  page.reply(2, {
+    compared: true,
+    text: 'Listed $200K · Market median $142K for this title in Hartford (80 reports)',
+    note: 'above the 75th'
+  });
+  await flush();
+  assert.match(page.panel.innerHTML, /above the 75th/);
+
+  await page.widget.analyze(second);
+  await flush();
+  assert.match(page.panel.innerHTML, /Salary not listed/);
+  assert.doesNotMatch(page.panel.innerHTML, /above the 75th/);
+  assert.equal(page.sent.filter((message) => message.type === 'PAY_MARKET').length, 1);
+
+  await page.widget.analyze(first);
+  await flush();
+  assert.match(page.panel.innerHTML, /above the 75th/);
+  assert.match(page.panel.innerHTML, /Listed \$200K · Market median \$142K/);
 });
