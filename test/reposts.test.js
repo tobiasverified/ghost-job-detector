@@ -153,6 +153,67 @@ test('a recent greenhouse posting falls through to linkedin matches', async () =
   assert.equal(result.score, 40);
 });
 
+test('a Workday job counts a LinkedIn repost only when two listings match', () => {
+  const job = {
+    title: 'AI Operations Engineer',
+    company: 'Argonne',
+    location: 'Lemont, IL',
+    locationNormalized: 'Lemont, Illinois',
+    platform: 'WORKDAY',
+    url: 'https://argonne.wd1.myworkdayjobs.com/en-US/Argonne_Careers/details/AI-Operations-Engineer_423470'
+  };
+  const linkedIn = (id) => ({
+    title: 'AI Operations Engineer at Argonne National Laboratory',
+    snippet: 'Argonne National Laboratory · Lemont, IL',
+    url: `https://www.linkedin.com/jobs/view/ai-operations-engineer-at-argonne-national-laboratory-${id}`
+  });
+  const one = matchReposts(job, [linkedIn('4472834013')]);
+  const two = matchReposts(job, [linkedIn('4472834013'), linkedIn('4400000001')]);
+
+  assert.equal(one.score, 0);
+  assert.equal(one.count, 0);
+  assert.equal(one.matches.length, 0);
+  assert.match(one.detail, /No other LinkedIn posting matched/);
+  assert.equal(two.score, REPOST_SCORE);
+  assert.equal(two.count, 2);
+  assert.equal(two.matches.length, 2);
+});
+
+test('a cached single LinkedIn match does not score a Workday job', async () => {
+  const cache = new MemoryCache();
+  const job = {
+    title: 'AI Operations Engineer',
+    company: 'Argonne',
+    location: 'Lemont, IL',
+    locationNormalized: 'Lemont, Illinois',
+    platform: 'WORKDAY',
+    url: 'https://argonne.wd1.myworkdayjobs.com/en-US/Argonne_Careers/details/AI-Operations-Engineer_423470'
+  };
+
+  await cache.set(repostCacheKey(job), {
+    score: 40,
+    count: 1,
+    available: true,
+    unavailable: false,
+    matches: [{
+      url: 'https://www.linkedin.com/jobs/view/ai-operations-engineer-at-argonne-national-laboratory-4472834013',
+      dateLabel: 'Date not shown'
+    }]
+  }, 60_000, NOW);
+
+  const detected = await detectReposts(job, {
+    now: NOW,
+    cache,
+    webSearch: async () => {
+      throw new Error('a stored syndication should be dropped without searching');
+    }
+  });
+
+  assert.equal(detected.score, 0);
+  assert.equal(detected.count, 0);
+  assert.equal(detected.matches.length, 0);
+});
+
 test('other cities stay unmatched when the title overlap is looser', () => {
   const job = {
     title: 'Senior Data Science Engineer',

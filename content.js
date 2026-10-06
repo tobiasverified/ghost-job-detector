@@ -45,6 +45,7 @@
   let urlTimer = null;
   let lastAnalyzedKey = '';
   let lastDescriptionLength = 0;
+  let lastSalaryLength = 0;
   let identityKey = '';
 
   function cleanText(value) {
@@ -306,6 +307,135 @@
       openJobsCount,
       openJobsCountSource: openJobsCount ? 'VISIBLE_SEARCH_RESULTS' : null
     };
+  }
+
+  function looksLikePay(text) {
+    const value = cleanText(text);
+
+    if (!value || value.length > 500) {
+      return false;
+    }
+
+    return /(?:[$£€¥₹]|\b(?:USD|GBP|EUR|CAD|AUD)\s+)\s?\d|\b\d[\d,]*(?:\.\d+)?\s*(?:[kK]\b|(?:\/|per)\s*(?:hr|hour))/i.test(value);
+  }
+
+  function insideDescription(element) {
+    return Boolean(element?.closest?.('.show-more-less-html__markup, .jobs-description-content__text, .jobs-box__html-content'));
+  }
+
+  function salaryFromJsonLd(job) {
+    const salary = job?.baseSalary;
+
+    if (!salary || typeof salary !== 'object') {
+      return '';
+    }
+
+    const value = salary.value && typeof salary.value === 'object' ? salary.value : salary;
+    const min = value.minValue ?? value.value;
+
+    if (min == null || min === '') {
+      return '';
+    }
+
+    const max = value.maxValue;
+    const unit = String(value.unitText || '').toUpperCase();
+    const suffix = unit.includes('HOUR') ? '/hr' : unit.includes('YEAR') ? '/yr' : '';
+    const currency = String(salary.currency || 'USD').toUpperCase();
+    const symbol = currency === 'EUR' ? '€' : currency === 'GBP' ? '£' : currency === 'JPY' ? '¥' : '$';
+    const left = `${symbol}${min}${suffix}`;
+
+    if (max != null && String(max) !== String(min)) {
+      return `${left} - ${symbol}${max}${suffix}`;
+    }
+
+    return left;
+  }
+
+  // LinkedIn's "{company} provided pay range" card sits above the description.
+  // readDescription stops at .show-more-less-html__markup, which does not
+  // include that card or the top-card pay insight.
+  function readPayRange(root, jsonLdJob) {
+    const scopes = [];
+    let current = root;
+
+    for (let depth = 0; depth < 6 && current; depth += 1) {
+      scopes.push(current);
+      const host = current.getRootNode?.();
+      current = current.parentElement || (host instanceof ShadowRoot ? host.host : null);
+    }
+
+    for (const scope of scopes) {
+      let headings = [];
+
+      try {
+        headings = scope.querySelectorAll?.('h1, h2, h3, h4') || [];
+      } catch {
+        headings = [];
+      }
+
+      for (const heading of headings) {
+        if (insideDescription(heading)) {
+          continue;
+        }
+
+        const label = cleanText(heading.textContent);
+
+        if (!/pay range|base pay|compensation/i.test(label)) {
+          continue;
+        }
+
+        const parentText = cleanText(heading.parentElement?.innerText || heading.parentElement?.textContent);
+        const nextText = cleanText(heading.nextElementSibling?.innerText || heading.nextElementSibling?.textContent);
+        const text = parentText.length > 0 && parentText.length <= 400 && looksLikePay(parentText)
+          ? parentText
+          : cleanText(`${label} ${nextText}`);
+
+        if (looksLikePay(text)) {
+          return { text: text.slice(0, 400), source: 'pay-range-heading' };
+        }
+      }
+    }
+
+    const selectors = [
+      '.compensation__salary',
+      '.job-details-salary',
+      '[class*="compensation__salary"]',
+      '[class*="job-details-salary"]',
+      '.job-details-jobs-unified-top-card__job-insight',
+      '.jobs-unified-top-card__job-insight'
+    ];
+
+    for (const scope of scopes) {
+      for (const selector of selectors) {
+        let elements = [];
+
+        try {
+          elements = scope.querySelectorAll?.(selector) || [];
+        } catch {
+          elements = [];
+        }
+
+        for (const element of elements) {
+          if (insideDescription(element)) {
+            continue;
+          }
+
+          const text = cleanText(element.innerText || element.textContent);
+
+          if (looksLikePay(text) && text.length <= 180) {
+            return { text, source: selector };
+          }
+        }
+      }
+    }
+
+    const fromLd = salaryFromJsonLd(jsonLdJob);
+
+    if (fromLd) {
+      return { text: fromLd, source: 'json-ld' };
+    }
+
+    return { text: '', source: '' };
   }
 
   function readDescription(root, jsonLdJob) {
@@ -612,6 +742,12 @@
       );
     const descriptionRead = readDescription(root, jsonLdJob);
     const description = descriptionRead.text;
+    const pay = readPayRange(root, jsonLdJob);
+    console.info('[GHD] pay range', {
+      source: pay.source,
+      text: pay.text,
+      inDescription: description.includes(pay.text) && pay.text.length > 0
+    });
 
     if (!title || !company) {
       return null;
@@ -645,6 +781,8 @@
       company,
       description,
       descriptionSource: descriptionRead.source,
+      salary: pay.text,
+      salarySource: pay.source,
       companySlug: companySlug(root),
       url,
       jobId,
@@ -945,13 +1083,14 @@
   async function publishJob(job, finalAttempt) {
     const next = pageInfo().kind === 'search' ? withSearchOpenJobs(job) : job;
     const description = String(next.description || '').trim();
+    const salary = String(next.salary || '').trim();
     const ready = pageApi.descriptionReadyForVagueness?.(description) === true;
     await saveJob(next);
     startCompanyIdentity(next);
 
     const key = analysisKey(next);
 
-    if (key === lastAnalyzedKey && description.length <= lastDescriptionLength) {
+    if (key === lastAnalyzedKey && description.length <= lastDescriptionLength && salary.length <= lastSalaryLength) {
       return;
     }
 
@@ -967,12 +1106,13 @@
       });
       lastAnalyzedKey = key;
       lastDescriptionLength = description.length;
+      lastSalaryLength = salary.length;
       clearRetries();
       globalThis.GhdWidget?.analyze({ ...next, description: '' });
       return;
     }
 
-    const scored = globalThis.GhostJobHeuristics?.analyzeVagueness?.(description, next.title || '');
+    const scored = globalThis.GhostJobHeuristics?.analyzeVagueness?.(description, next.title || '', salary);
 
     if (scored) {
       console.info('[GHD] vagueness text', {
@@ -981,6 +1121,8 @@
         descriptionLength: description.length,
         wordCount: scored.raw?.wordCount ?? null,
         descriptionSource: next.descriptionSource || '',
+        salarySource: next.salarySource || '',
+        salary: salary.slice(0, 200),
         factors: scored.factors,
         raw: scored.raw,
         text: description.slice(0, 800)
@@ -989,6 +1131,7 @@
 
     lastAnalyzedKey = key;
     lastDescriptionLength = description.length;
+    lastSalaryLength = salary.length;
     clearRetries();
     globalThis.GhdWidget?.analyze(next);
   }

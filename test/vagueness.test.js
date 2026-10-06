@@ -173,6 +173,54 @@ test('a hype word that is also the job title does not count', () => {
   assert.equal(titled.raw.buzzwords, 0, explain(titled));
 });
 
+test('a LinkedIn pay-range block counts as salary listed', () => {
+  const description = atLeast250Words('The analyst supports clinical systems and documents the workflow for each department.');
+  const pay = 'Base pay range $30.00/hr - $70.00/hr';
+  const server = analyzeVagueness(description, 'Clinical Systems Analyst', pay);
+  const client = heuristics.analyzeVagueness(description, 'Clinical Systems Analyst', pay);
+  const row = heuristics.buildFactors(
+    client,
+    { unavailable: true, detected: false, score: 0 },
+    { available: false },
+    { unavailable: true, rating: null, score: 0 },
+    { unavailable: true, available: false, score: 0 }
+  ).find((factor) => factor.label === 'Description Clarity');
+
+  assert.equal(server.raw.hasSalary, true);
+  assert.equal(server.factors.hasSalary.score, 0);
+  assert.equal(server.factors.hasSalary.source, 'pay-range');
+  assert.equal(server.raw.wordCount, analyzeVagueness(description).raw.wordCount);
+  assert.equal(client.raw.hasSalary, true);
+  assert.equal(client.factors.hasSalary.source, 'pay-range');
+  assert.equal(JSON.stringify(row.explain).includes('Salary listed'), true);
+  assert.equal(JSON.stringify(row.explain).includes('No salary listed'), false);
+});
+
+test('existing salary formats still count', () => {
+  const formats = [
+    '$160,000-$190,000',
+    '$160,000',
+    '80k-100k',
+    '80k to 100k',
+    '$30.00/hr - $70.00/hr',
+    '$30/hour',
+    '$30 - $70 per hour',
+    '$30.00/hr \u2013 $70.00/hr',
+    '£50,000',
+    '€80k',
+    'USD 120,000'
+  ];
+  const body = atLeast250Words('The team documents the workflow for each department.');
+
+  for (const format of formats) {
+    const result = analyzeVagueness(`${body} ${format}`);
+    const client = heuristics.analyzeVagueness(`${body} ${format}`);
+    assert.equal(result.raw.hasSalary, true, format);
+    assert.equal(result.factors.hasSalary.source, 'description', format);
+    assert.equal(client.raw.hasSalary, true, format);
+  }
+});
+
 test('a long vague healthcare posting is still Very Vague', () => {
   const result = analyzeVagueness(VAGUE_HEALTH);
 

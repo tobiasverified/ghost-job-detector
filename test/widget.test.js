@@ -152,6 +152,18 @@ test('a full check with fewer than two informative factors shows no score', asyn
 
   assert.equal(page.heuristics.informativeFactorCount(blank), 1);
   assert.equal(page.heuristics.informativeFactorCount(scored), 2);
+  assert.equal(page.heuristics.informativeFactorCount({
+    layoff: { unavailable: true },
+    reviews: { rating: 4.2, reviewCount: 3, unavailable: false, score: 0 },
+    workforce: { available: false, employees: null, score: 0 },
+    reposts: { unavailable: false, available: true, score: 0 }
+  }), 1);
+  assert.equal(page.heuristics.informativeFactorCount({
+    layoff: { unavailable: true },
+    reviews: { rating: 4.2, reviewCount: 5, unavailable: false, score: 0 },
+    workforce: { available: false, employees: null, score: 0 },
+    reposts: { unavailable: true }
+  }), 1);
 
   await page.widget.analyze({
     jobId: 'blank',
@@ -176,6 +188,16 @@ test('a full check with fewer than two informative factors shows no score', asyn
   });
   await flush();
 
+  assert.match(page.panel.innerHTML, /Checking\.\.\./);
+  assert.match(page.panel.innerHTML, /No recent coverage/);
+  assert.doesNotMatch(page.panel.innerHTML, /class="number"/);
+  assert.doesNotMatch(page.panel.innerHTML, /Not enough data to score/);
+
+  page.reply(1, {
+    factors: { reposts: blank.reposts }
+  });
+  await flush();
+
   const withheld = page.panel.innerHTML;
   assert.match(withheld, /Not enough data to score/);
   assert.doesNotMatch(withheld, /class="number"/);
@@ -197,15 +219,47 @@ test('a full check with fewer than two informative factors shows no score', asyn
       layoffs: scored.layoff,
       reviews: scored.reviews,
       hiringRatio: scored.workforce,
-      reposts: scored.reposts
+      reposts: { pending: true, score: 0, unavailable: true, available: false }
     },
     cached: false
   });
+  await flush();
+  assert.match(scoredPage.panel.innerHTML, /Checking\.\.\./);
+  assert.doesNotMatch(scoredPage.panel.innerHTML, /class="number"/);
+  scoredPage.reply(1, { factors: { reposts: scored.reposts } });
   await flush();
 
   assert.match(scoredPage.panel.innerHTML, /class="number"/);
   assert.doesNotMatch(scoredPage.panel.innerHTML, /Not enough data to score/);
   assert.match(scoredPage.panel.innerHTML, /No duplicate found/);
+});
+
+test('a Workday check sends the resolved company name', async () => {
+  const page = loadWidget();
+  const job = {
+    title: 'AI Operations Engineer',
+    company: 'Argonne',
+    description,
+    platform: 'WORKDAY',
+    url: 'https://argonne.wd1.myworkdayjobs.com/en-US/Argonne_Careers/job/Lemont-IL/AI-Operations-Engineer_423470'
+  };
+
+  await page.widget.analyze(job);
+  let settle;
+  page.widget.trackIdentity(new Promise((resolve) => {
+    settle = resolve;
+  }));
+  page.click('ghd-full');
+  settle({ ready: true, company: 'Argonne National Laboratory' });
+  await flush();
+
+  assert.equal(page.sent[0].type, 'ENRICH_JOB');
+  assert.equal(page.sent[0].body.company, 'Argonne National Laboratory');
+  assert.equal(page.sent[1].type, 'REPOST_JOB');
+  assert.equal(page.sent[1].body.company, 'Argonne National Laboratory');
+  page.reply(0, remoteAnalysis(4.3));
+  page.reply(1, remoteAnalysis(4.3));
+  await flush();
 });
 
 test('a full check that finishes after switching jobs is kept and shown on coming back', async () => {
@@ -214,8 +268,12 @@ test('a full check that finishes after switching jobs is kept and shown on comin
   await page.widget.analyze(jobA);
   page.click('ghd-full');
   await flush();
-  assert.equal(page.sent.length, 1);
+  assert.equal(page.sent.length, 2);
+  assert.equal(page.sent[0].type, 'ENRICH_JOB');
+  assert.equal(page.sent[0].body.deferReposts, true);
   assert.equal(page.sent[0].body.jobId, '101');
+  assert.equal(page.sent[1].type, 'REPOST_JOB');
+  assert.equal(page.sent[1].body.jobId, '101');
 
   await page.widget.analyze(jobB);
   const jobBPanel = page.panel.innerHTML;
@@ -223,6 +281,7 @@ test('a full check that finishes after switching jobs is kept and shown on comin
 
   // Job A's result arrives while job B is on screen: B's panel is left alone.
   page.reply(0, remoteAnalysis(4.1));
+  page.reply(1, remoteAnalysis(4.1));
   await flush();
   assert.equal(page.panel.innerHTML, jobBPanel);
 
@@ -248,30 +307,35 @@ test('the T-Mobile repost row counts matches and links each earlier posting', as
   await page.widget.analyze(job);
   page.click('ghd-full');
   await flush();
+  const reposts = {
+    score: 40,
+    count: 3,
+    available: true,
+    unavailable: false,
+    dates: ['Date not shown', 'Date not shown', '1 day ago'],
+    matches: [
+      { url: job.url, dateLabel: 'Date not shown' },
+      { url: earlier, dateLabel: 'Date not shown' },
+      { url: second, dateLabel: 'Date not shown' }
+    ],
+    detail: 'should not be reused'
+  };
   page.reply(0, {
-    ghostScore: 44,
-    label: 'Ghost Job: Possible',
+    ghostScore: 4,
+    label: 'Ghost Job: Unlikely',
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { detected: false, unavailable: false, score: 0 },
       reviews: { rating: 3.6, platform: 'Glassdoor', score: 4, unavailable: false },
       hiringRatio: { available: true, score: 0, ratio: 0.07, employees: 38000, openRoles: 2743 },
-      reposts: {
-        score: 40,
-        count: 3,
-        available: true,
-        unavailable: false,
-        dates: ['Date not shown', 'Date not shown', '1 day ago'],
-        matches: [
-          { url: job.url, dateLabel: 'Date not shown' },
-          { url: earlier, dateLabel: 'Date not shown' },
-          { url: second, dateLabel: 'Date not shown' }
-        ],
-        detail: 'should not be reused'
-      }
+      reposts: { pending: true, score: 0, unavailable: true, available: false }
     },
     cached: false
   });
+  await flush();
+  assert.match(page.panel.innerHTML, /Checking\.\.\./);
+  assert.doesNotMatch(page.panel.innerHTML, /class="number"/);
+  page.reply(1, { factors: { reposts } });
   await flush();
 
   const html = page.panel.innerHTML;
@@ -303,6 +367,7 @@ test('hide stays collapsed when another job is selected and checked', async () =
   page.click('ghd-full');
   await flush();
   page.reply(0, remoteAnalysis(4));
+  page.reply(1, remoteAnalysis(4));
   await flush();
 
   assert.match(page.panel.innerHTML, />Expand</);
@@ -325,6 +390,47 @@ test('returning to a job whose check is still running shows it as checking', asy
   assert.doesNotMatch(page.panel.innerHTML, /Run full check/);
 
   page.reply(0, remoteAnalysis(3.7));
+  page.reply(1, remoteAnalysis(3.7));
   await flush();
   assert.ok(page.panel.innerHTML.includes('3.7 / 5 on Glassdoor'));
+});
+
+test('the review row shows a count only when the payload has one', async () => {
+  const counted = loadWidget();
+  await counted.widget.analyze(jobA);
+  counted.click('ghd-full');
+  await flush();
+  const payload = remoteAnalysis(3.7);
+  payload.factors.reviews = {
+    rating: 3.7,
+    platform: 'Glassdoor',
+    score: 4,
+    unavailable: false,
+    reviewCount: 43
+  };
+  counted.reply(0, payload);
+  counted.reply(1, payload);
+  await flush();
+  assert.match(counted.panel.innerHTML, /3\.7 \/ 5 on Glassdoor \(43 reviews\)/);
+  assert.doesNotMatch(counted.panel.innerHTML, /0 reviews/);
+
+  const alone = loadWidget();
+  await alone.widget.analyze(jobA);
+  alone.click('ghd-full');
+  await flush();
+  alone.reply(0, remoteAnalysis(3.7));
+  alone.reply(1, remoteAnalysis(3.7));
+  await flush();
+  assert.match(alone.panel.innerHTML, /3\.7 \/ 5 on Glassdoor(?! \(43 reviews\))/);
+  assert.doesNotMatch(alone.panel.innerHTML, /\(\d+ reviews\)/);
+
+  const blank = loadWidget();
+  const row = blank.heuristics.buildFactors(
+    { label: 'Clear', score: 0 },
+    { detected: false, unavailable: false, score: 0 },
+    { available: false, score: 0 },
+    { rating: 3.7, platform: 'Glassdoor', score: 4, unavailable: false, reviewCount: 0 },
+    { score: 0, unavailable: false }
+  ).find((factor) => factor.label === 'Company Reviews');
+  assert.equal(row.value, '3.7 / 5 on Glassdoor');
 });

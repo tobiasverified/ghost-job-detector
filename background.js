@@ -384,26 +384,6 @@ async function cachedSearchHtml(query, key, ttlMs) {
   return '';
 }
 
-async function layoffHtml(query) {
-  const tools = self.GhdFetch;
-  return cachedSearchHtml(query, tools.normalizeStorageKey(tools.LAYOFF_PREFIX, query), tools.LAYOFF_TTL_MS);
-}
-
-async function reviewHtml(company) {
-  const name = String(company || '').trim();
-
-  if (!name) {
-    return '';
-  }
-
-  const tools = self.GhdFetch;
-  return cachedSearchHtml(
-    `"${name}" reviews`,
-    tools.normalizeStorageKey(tools.REVIEW_PREFIX, name),
-    tools.SEARCH_TTL_MS
-  );
-}
-
 function repostStorageKey(body) {
   const slug = (value) => String(value || '')
     .toLowerCase()
@@ -438,30 +418,16 @@ async function repostHtml(body) {
   );
 }
 
-async function enrichJob(message) {
-  const body = message.body || {};
-  const query = String(message.layoffQuery || '').trim();
-  const cap = (work, limitMs) => Promise.race([
+function capHtml(work, limitMs) {
+  return Promise.race([
     work,
     new Promise((resolve) => setTimeout(() => resolve(''), limitMs))
   ]);
-  const started = performance.now();
-  const timing = {};
-  const timedCap = (name, work, limitMs) => {
-    const begin = performance.now();
-    return cap(work, limitMs).catch(() => '').then((html) => {
-      timing[name] = { ms: Math.round(performance.now() - begin), bytes: String(html || '').length };
-      return html;
-    });
-  };
-  const [layoffs, reviews, reposts] = await Promise.all([
-    query ? timedCap('prefetchLayoffs', layoffHtml(query), 4000) : '',
-    timedCap('prefetchReviews', reviewHtml(body.company), 4000),
-    timedCap('prefetchReposts', repostHtml(body), 6000)
-  ]);
-  timing.prefetchMs = Math.round(performance.now() - started);
-  const apiStarted = performance.now();
+}
 
+async function enrichJob(message) {
+  const body = message.body || {};
+  const started = performance.now();
   const base = await apiBase();
   const response = await fetch(`${base}/api/analyze-job`, {
     method: 'POST',
@@ -471,19 +437,12 @@ async function enrichJob(message) {
     },
     body: JSON.stringify({
       ...body,
-      clientHtml: {
-        layoffs,
-        reviews,
-        reposts
-      }
+      deferReposts: true
     }),
-    // Enrich budget, three layers. This abort is the one that ends the HTTP call.
-    // The widget's 18s wait (lib/widget.js ENRICH_WAIT_MS) also covers up to 6s
-    // of search-page collection before this fetch. vercel.json maxDuration for
-    // api/analyze-job.js and api/company-rating.js is 15s, above this abort, so
-    // the platform does not kill the function while the client is still waiting.
-    // If you raise this number, raise that maxDuration too. The server cap has
-    // to be the last of the three to fire.
+    // This abort ends the main check. Reposts are a second request, so this
+    // no longer waits on a search-page prefetch. vercel.json maxDuration for
+    // api/analyze-job.js is 15s, above this abort. If you raise this number,
+    // raise that maxDuration too.
     signal: AbortSignal.timeout(12000)
   });
 
@@ -492,9 +451,49 @@ async function enrichJob(message) {
   }
 
   const analysis = await response.json();
-  timing.apiMs = Math.round(performance.now() - apiStarted);
-  timing.enrichMs = Math.round(performance.now() - started);
-  return { ...analysis, clientTiming: timing };
+  return {
+    ...analysis,
+    clientTiming: {
+      apiMs: Math.round(performance.now() - started),
+      enrichMs: Math.round(performance.now() - started)
+    }
+  };
+}
+
+async function enrichReposts(message) {
+  const body = message.body || {};
+  const started = performance.now();
+  const prefetchStarted = performance.now();
+  const reposts = await capHtml(repostHtml(body), 4000).catch(() => '');
+  const prefetchMs = Math.round(performance.now() - prefetchStarted);
+  const apiStarted = performance.now();
+  const base = await apiBase();
+  const response = await fetch(`${base}/api/job-reposts`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-GHD-Client': 'ghost-job-detector'
+    },
+    body: JSON.stringify({
+      ...body,
+      clientHtml: { reposts }
+    }),
+    signal: AbortSignal.timeout(10000)
+  });
+
+  if (!response.ok) {
+    throw new Error(`API_${response.status}`);
+  }
+
+  const payload = await response.json();
+  return {
+    reposts: payload.reposts,
+    clientTiming: {
+      prefetchReposts: { ms: prefetchMs, bytes: String(reposts || '').length },
+      apiMs: Math.round(performance.now() - apiStarted),
+      enrichMs: Math.round(performance.now() - started)
+    }
+  };
 }
 
 async function resolveCompanyIdentity(body) {
@@ -516,7 +515,35 @@ async function resolveCompanyIdentity(body) {
   return response.json();
 }
 
+async function wikidataJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      // Wikimedia asks browser clients to identify themselves with this header.
+      'Api-User-Agent': 'GhostJobDetector/1.1 (https://ghost-job-detector-nine.vercel.app)'
+    },
+    signal: AbortSignal.timeout(8000)
+  });
+
+  return {
+    status: response.status,
+    payload: response.ok ? await response.json() : null
+  };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'WIKIDATA_JSON') {
+    if (!self.GhdFetch.allowedWikidataUrl(message.url)) {
+      sendResponse({ ok: false, error: 'BLOCKED_URL' });
+      return true;
+    }
+
+    wikidataJson(message.url)
+      .then((result) => sendResponse({ ok: result.status >= 200 && result.status < 300, ...result }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
   if (message.type === 'FETCH_TEXT') {
     if (!allowedFetchUrl(message.url)) {
       sendResponse({ ok: false, error: 'BLOCKED_URL' });
@@ -553,6 +580,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ENRICH_JOB') {
     enrichJob(message)
       .then((analysis) => sendResponse({ ok: true, analysis }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === 'REPOST_JOB') {
+    enrichReposts(message)
+      .then((result) => sendResponse({ ok: true, reposts: result.reposts, clientTiming: result.clientTiming }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;
   }

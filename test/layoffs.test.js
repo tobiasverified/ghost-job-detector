@@ -180,6 +180,8 @@ test('AMLI Residential does not match an HHS article that only says residential'
 
   assert.equal(companyQueries('AMLI Residential').includes('residential'), false);
   assert.deepEqual(companyQueries('AMLI Residential'), ['amli residential', 'amli']);
+  assert.equal(companyQueries('Argonne National Laboratory').includes('laboratory'), false);
+  assert.deepEqual(companyQueries('Argonne National Laboratory'), ['argonne national laboratory', 'argonne national']);
   assert.deepEqual(companyQueries('Pearson Education'), ['pearson education', 'pearson']);
   assert.deepEqual(companyQueries('Hyundai Supernal'), ['hyundai supernal', 'supernal']);
   assert.equal(result.detected, true);
@@ -367,6 +369,28 @@ test('a NewsData match wins over a web search that ran alongside it', async () =
   assert.equal(called, true);
   assert.equal(result.source, 'newsdata');
   assert.equal(result.detected, true);
+});
+
+test('layoff HTML from the extension skips the server web search', async () => {
+  let webCalls = 0;
+  const result = await detectLayoffs('Sony', {
+    now: NOW,
+    fetch: async () => fyi404(),
+    clientHtml: '<html><title>No layoff article</title></html>',
+    searchNews: async () => [],
+    webSearch: async () => {
+      webCalls += 1;
+      return [{
+        title: 'Sony Pictures lays off hundreds',
+        snippet: 'April 7, 2026 Sony Pictures Entertainment is restructuring with plans for hundreds of layoffs.',
+        url: 'https://variety.com/sony',
+        source: 'duckduckgo'
+      }];
+    }
+  });
+
+  assert.equal(webCalls, 0);
+  assert.equal(result.detected, false);
 });
 
 test('DuckDuckGo HTML supplied by the extension is used when the server cannot search', async () => {

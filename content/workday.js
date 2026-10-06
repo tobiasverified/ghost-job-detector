@@ -156,6 +156,15 @@
   }
 
   function withOpenJobs(job) {
+    // A detail page's title is one posting, not the company's open roles.
+    if (/\/(?:job|details)\//.test(location.pathname)) {
+      return {
+        ...job,
+        openJobsCount: null,
+        openJobsCountSource: null
+      };
+    }
+
     const openJobsCount = getObservedOpenJobsCount();
 
     return {
@@ -251,7 +260,10 @@
           throw new Error('globalThis.GhdPage.resolveCompanyIdentity is undefined');
         }
 
-        return pages.resolveCompanyIdentity(signals).then((company) => {
+        // Without a fetch the resolver cannot corroborate a one-word site name
+        // with Wikidata and keeps it ("Argonne" for Argonne National Laboratory).
+        const wikidataFetch = pages.backgroundWikidataFetch?.();
+        return pages.resolveCompanyIdentity(signals, wikidataFetch ? { fetch: wikidataFetch } : {}).then((company) => {
           if (pages.isNormalCompanyName?.(company)) {
             return company;
           }

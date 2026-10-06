@@ -100,9 +100,9 @@ test('a ratings response returns the overall score and caches it for a day', asy
   });
   assert.equal(calls.filter((call) => call.url.includes('rapidapi.com')).length, 1);
 
-  const stored = await cache.get('glassdoor_rating_v2_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
+  const stored = await cache.get('glassdoor_rating_v3_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
   assert.equal(stored.ratings.overall, 3.849);
-  assert.equal(await cache.get('glassdoor_rating_v2_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
+  assert.equal(await cache.get('glassdoor_rating_v3_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
 });
 
 test('parseEmployeeSize reads Glassdoor size buckets', () => {
@@ -167,7 +167,7 @@ test('403 stays unavailable and 429 is quota with no retry', async () => {
 
     assert.deepEqual(rating, { overall: null, error });
     assert.equal(calls, 1);
-    assert.equal(await cache.get('glassdoor_rating_v2_acme', NOW), null);
+    assert.equal(await cache.get('glassdoor_rating_v3_acme', NOW), null);
   }
 });
 
@@ -203,7 +203,8 @@ test('a missing full name retries the shorter alias and caches it under the orig
         return jsonResponse(200, {
           ratings: { overall: 3.9 },
           size: '1,001 to 5,000 Employees',
-          counts: { open_jobs: 12 }
+          counts: { open_jobs: 12 },
+          website: 'https://www.amli.com'
         });
       }
 
@@ -259,7 +260,7 @@ test('both the full name and the shorter alias missing returns not_found', async
 
   assert.equal(glassdoorCalls, 2);
   assert.deepEqual(rating, { overall: null, error: 'not_found' });
-  assert.equal(await cache.get('glassdoor_rating_v2_amli residential', NOW), null);
+  assert.equal(await cache.get('glassdoor_rating_v3_amli residential', NOW), null);
 });
 
 test('a missing key or a thrown request returns unavailable', async () => {
@@ -862,6 +863,15 @@ test('a Glassdoor employer name must not add distinctive words to the company lo
   assert.equal(glassdoorEntityMatches('Acme', 'Acme Corporation'), true);
   assert.equal(glassdoorEntityMatches('Acme', 'Group Inc'), false);
   assert.equal(glassdoorEntityMatches('Acme', ''), true);
+  assert.equal(glassdoorEntityMatches('Harrison Clarke', 'Clarke'), false);
+  assert.equal(glassdoorEntityMatches('Harrison Clarke', 'Harrison Clarke International'), true);
+  assert.equal(glassdoorEntityMatches('Palantir', 'Palantir Technologies'), true);
+  assert.equal(glassdoorEntityMatches('TKO', 'TKO Group Holdings'), true);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne National Laboratory'), true);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne'), false);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne National'), false);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'UChicago Argonne, LLC'), false);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'University of Chicago'), false);
 });
 
 test('a rejected Glassdoor entity is remembered, so the next lookup does not ask RapidAPI again', async () => {
@@ -923,4 +933,185 @@ test('a wrong-company payload cached before the entity check is not served', asy
 
   assert.equal(rating.overall, null);
   assert.equal(rating.openJobs ?? null, null);
+});
+
+test('counts.reviews is returned with the rating and omitted when absent', async () => {
+  const counted = await lookupCompanyRating('Capital One', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: async (url) => {
+      if (String(url).includes('wikidata.org')) {
+        return jsonResponse(200, { search: [] });
+      }
+
+      return jsonResponse(200, {
+        name: 'Capital One',
+        ratings: { overall: 3.7 },
+        counts: { reviews: 43, open_jobs: 10 }
+      });
+    }
+  });
+  const missing = await lookupCompanyRating('Capital One', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: async (url) => {
+      if (String(url).includes('wikidata.org')) {
+        return jsonResponse(200, { search: [] });
+      }
+
+      return jsonResponse(200, {
+        name: 'Capital One',
+        ratings: { overall: 3.7 },
+        counts: { open_jobs: 10 }
+      });
+    }
+  });
+
+  assert.equal(counted.overall, 3.7);
+  assert.equal(counted.reviewCount, 43);
+  assert.equal(missing.overall, 3.7);
+  assert.equal(missing.reviewCount, undefined);
+});
+
+test('the Harrison Clarke alias cannot accept Clarke', async () => {
+  let rapidCalls = 0;
+  const deps = {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: async (url) => {
+      const href = String(url);
+
+      if (href.includes('wikidata.org')) {
+        return jsonResponse(200, { search: [] });
+      }
+
+      rapidCalls += 1;
+
+      if (/company=clarke(?:&|$)/i.test(href)) {
+        return jsonResponse(200, {
+          name: 'Clarke',
+          id: '14106',
+          website: 'https://www.clarkeinc.com',
+          ratings: { overall: 3.7 },
+          size: '501 to 1000 Employees',
+          counts: { reviews: 20, open_jobs: 0 }
+        });
+      }
+
+      return jsonResponse(200, {
+        name: 'State Farm',
+        id: '2990',
+        website: 'https://www.statefarm.com/careers',
+        ratings: { overall: 3.9 },
+        size: '10000+ Employees',
+        counts: { reviews: 1000, open_jobs: 23641 }
+      });
+    }
+  };
+
+  const rating = await lookupCompanyRating('Harrison Clarke', deps);
+  const callsAfterFirst = rapidCalls;
+  const again = await lookupCompanyRating('Harrison Clarke', deps);
+
+  assert.equal(rating.overall, null);
+  assert.equal(rating.employees ?? null, null);
+  assert.equal(rating.reviewCount, undefined);
+  assert.equal(again.overall, null);
+  assert.equal(rapidCalls, callsAfterFirst);
+});
+
+test('a one-word alias is not accepted without corroboration', async () => {
+  const rating = await lookupCompanyRating('Harrison Clarke', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: async (url) => {
+      const href = String(url);
+
+      if (href.includes('wikidata.org')) {
+        return jsonResponse(200, { search: [] });
+      }
+
+      if (/company=clarke(?:&|$)/i.test(href)) {
+        return jsonResponse(200, {
+          name: 'Harrison Clarke International',
+          id: '1905496',
+          website: 'https://www.example.com',
+          ratings: { overall: 4.5 },
+          counts: { reviews: 43, open_jobs: 2 }
+        });
+      }
+
+      return jsonResponse(404, {});
+    }
+  });
+
+  assert.equal(rating.overall, null);
+  assert.equal(rating.error, 'not_found');
+});
+
+test('a one-word alias is accepted when the website, slug, or Wikidata name agrees', async () => {
+  async function lookup(extra, aliasBody) {
+    return lookupCompanyRating('Harrison Clarke', {
+      now: NOW,
+      cache: new MemoryCache(),
+      env: { RAPIDAPI_KEY: SECRET },
+      ...extra,
+      fetch: async (url) => {
+        const href = String(url);
+
+        if (href.includes('wbsearchentities')) {
+          return jsonResponse(200, extra.wikidata ? { search: [{ id: 'Q1' }] } : { search: [] });
+        }
+
+        if (href.includes('wbgetentities') && href.includes('labels')) {
+          return jsonResponse(200, {
+            entities: {
+              Q1: {
+                labels: { en: { value: 'Harrison Clarke International' } },
+                aliases: { en: [{ value: 'Harrison Clarke' }] }
+              }
+            }
+          });
+        }
+
+        if (href.includes('wikidata.org')) {
+          return jsonResponse(200, { entities: { Q1: { claims: {} } }, search: [] });
+        }
+
+        if (/company=clarke(?:&|$)/i.test(href)) {
+          return jsonResponse(200, aliasBody);
+        }
+
+        return jsonResponse(404, {});
+      }
+    });
+  }
+
+  const byDomain = await lookup({}, {
+    name: 'Harrison Clarke International',
+    ratings: { overall: 4.5 },
+    counts: { reviews: 43 },
+    website: 'https://www.harrisonclarke.com'
+  });
+  const bySlug = await lookup({ companySlug: 'harrison-clarke' }, {
+    name: 'Harrison Clarke International',
+    ratings: { overall: 4.5 },
+    counts: { reviews: 43 }
+  });
+  const byWikidata = await lookup({ wikidata: true }, {
+    name: 'Harrison Clarke International',
+    ratings: { overall: 4.5 },
+    counts: { reviews: 43 },
+    website: 'https://www.example.com'
+  });
+
+  assert.equal(byDomain.overall, 4.5);
+  assert.equal(byDomain.reviewCount, 43);
+  assert.equal(bySlug.overall, 4.5);
+  assert.equal(byWikidata.overall, 4.5);
+  assert.equal(byWikidata.reviewCount, 43);
 });

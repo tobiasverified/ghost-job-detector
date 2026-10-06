@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { resolveWorkforce } from '../lib/server/analyze.js';
 import { boardNameVerdict, boardTokenVerdict, parseAtsBoard, parseWorkdayBoard, resolveOpenJobCount, workdaySiteMatchesCompany } from '../lib/server/open-jobs.js';
 
 const NOW = new Date('2026-10-01T12:00:00Z');
+const UMIAMI_URL = 'https://umiami.wd1.myworkdayjobs.com/en-US/UMCareerStaff/details/Desktop-Support-Technician_R100101533?jobFamilyGroup=12a3cb6c735c10343a4fee7b7cc4da55';
+
+function umiamiFixture(name) {
+  return readFileSync(new URL(`./fixtures/umiami/${name}`, import.meta.url), 'utf8');
+}
 
 test('an on-page LinkedIn count is used before any career-site lookup', async () => {
   let searches = 0;
@@ -122,6 +128,56 @@ test('a Greenhouse board on the company site is counted from the public jobs API
   assert.equal(searches, 0);
 });
 
+test('a filtered UMiami Workday listing is not the company total', async () => {
+  const calls = [];
+  const unfiltered = JSON.parse(umiamiFixture('board.cxs-jobs.json'));
+  const counted = await resolveOpenJobCount('University of Miami', {
+    platform: 'WORKDAY',
+    hostname: 'umiami.wd1.myworkdayjobs.com',
+    onPageCount: 22,
+    jobUrl: UMIAMI_URL,
+    profile: Promise.resolve({ openJobs: 2083 })
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async () => [],
+    fetch: async (url, options = {}) => {
+      const href = String(url);
+      const method = options.method || 'GET';
+      calls.push({ url: href, method, body: options.body || '' });
+
+      if (href.includes('/wday/cxs/')) {
+        const body = JSON.parse(options.body);
+        const filtered = Object.keys(body.appliedFacets || {}).length > 0 || String(body.searchText || '').trim();
+        return {
+          ok: true,
+          async json() {
+            return filtered ? { total: 56, jobPostings: [] } : unfiltered;
+          }
+        };
+      }
+
+      return { ok: true, async text() { return umiamiFixture('board.html'); } };
+    }
+  });
+  const cxs = calls.filter((call) => call.url.includes('/wday/cxs/'));
+
+  assert.equal(cxs.length, 1);
+  assert.equal(cxs[0].method, 'POST');
+  assert.equal(cxs[0].url, 'https://umiami.wd1.myworkdayjobs.com/wday/cxs/umiami/UMCareerStaff/jobs');
+  assert.deepEqual(JSON.parse(cxs[0].body), {
+    appliedFacets: {},
+    limit: 20,
+    offset: 0,
+    searchText: ''
+  });
+  assert.equal(counted.count, unfiltered.total);
+  assert.equal(counted.source, 'workday');
+  assert.notEqual(counted.count, 22);
+  assert.notEqual(counted.count, 56);
+  assert.notEqual(counted.count, 2083);
+});
+
 test('a Workday tenant is counted from the first CXS page total after the org name matches', async () => {
   const calls = [];
   const counted = await resolveOpenJobCount('TKO Group Holdings', {
@@ -226,7 +282,9 @@ test('a Workday page for a different organization is rejected and search cites a
 });
 
 test('a cited 2 is rejected when it is only a digit inside a larger count', async () => {
-  const snippet = 'Alignerr has approximately 2,538 total employees. Alignerr had 7,732 active job postings in 2026.';
+  const year = new Date().getFullYear();
+  const snippet = `Alignerr has approximately 2,538 total employees. Alignerr had 7,732 active job postings in ${year}.`;
+  const yearly = `Alignerr had 7,732 job postings in ${year}.`;
   const rejected = await resolveOpenJobCount('Alignerr', {
     glassdoorOpenJobs: 0
   }, {
@@ -253,10 +311,24 @@ test('a cited 2 is rejected when it is only a digit inside a larger count', asyn
     fetch: async () => ({ ok: false, status: 404, async text() { return ''; }, async json() { return {}; } }),
     askGroq: async () => 'Result 1 states 7,732 active job postings.'
   });
+  const yearTotal = await resolveOpenJobCount('Alignerr', {
+    glassdoorOpenJobs: 0
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    webSearch: async () => [{
+      title: 'Alignerr employees',
+      url: 'https://www.reveliolabs.com/companies/alignerr/employees',
+      snippet: yearly
+    }],
+    fetch: async () => ({ ok: false, status: 404, async text() { return ''; }, async json() { return {}; } }),
+    askGroq: async () => 'Result 1 states 7,732 job postings.'
+  });
 
   assert.equal(rejected, null);
   assert.equal(accepted.count, 7732);
   assert.equal(accepted.url, 'https://www.reveliolabs.com/companies/alignerr/employees');
+  assert.equal(yearTotal, null);
 });
 
 test('a parent Workday tenant is accepted when the site slug is the company alias', async () => {
@@ -619,14 +691,20 @@ test('a company open-roles count beats an earlier scoped aggregator count', asyn
   assert.match(workforce.label, /5,624 open roles \(estimated\)/);
 });
 
-test('the job platform count beats an earlier scoped aggregator count', async () => {
+test('the Alignerr worldwide cap is a floor and a step number is not the count', async () => {
   const counted = await resolveOpenJobCount('Alignerr', {
     platform: 'LINKEDIN',
     hostname: 'www.linkedin.com',
     jobUrl: 'https://www.linkedin.com/jobs/view/1',
-    glassdoorOpenJobs: 0
+    glassdoorOpenJobs: 0,
+    website: 'https://www.alignerr.com'
   }, citationDeps({
     results: [
+      {
+        title: 'Alignerr: Jobs',
+        snippet: 'Apply today through our open Job Postings. Employees - Now: 3,950.',
+        url: 'https://www.linkedin.com/company/alignerr/jobs'
+      },
       {
         title: 'Remote Alignerr Jobs',
         snippet: 'Browse 45 REMOTE ALIGNERR jobs from companies hiring now.',
@@ -634,11 +712,26 @@ test('the job platform count beats an earlier scoped aggregator count', async ()
       },
       {
         title: 'Alignerr Jobs in Worldwide (5000+ Open Roles)',
-        snippet: "Today's top 5000+ Alignerr jobs in Worldwide.",
+        snippet: '5000+ Alignerr jobs in Worldwide. New Alignerr jobs added daily.',
         url: 'https://www.linkedin.com/jobs/alignerr-jobs-worldwide'
+      },
+      {
+        title: 'Alignerr Jobs, Employment',
+        snippet: 'Browse 2 Alignerr jobs. New jobs posted today.',
+        url: 'https://www.indeed.com/q-alignerr-jobs.html'
+      },
+      {
+        title: 'Learn how to become an Alignerr today',
+        snippet: 'Explore Alignerr Connect Step 2 ## Apply for a job. 2 Apply for a job.',
+        url: 'https://www.alignerr.com/process'
+      },
+      {
+        title: 'Alignerr jobs search',
+        snippet: '5,000+ Alignerr jobs.',
+        url: 'https://www.linkedin.com/jobs/search/?keywords=Alignerr'
       }
     ],
-    answer: '45 open jobs in result 1. 5,000+ open roles in result 2.'
+    answer: 'Result 2 states 45. Result 3 states 5,000+ open roles. Result 4 states 2 Alignerr jobs. Step 2.'
   }));
   const workforce = resolveWorkforce({
     employees: 2538,
@@ -655,11 +748,14 @@ test('the job platform count beats an earlier scoped aggregator count', async ()
   });
 
   assert.equal(counted.count, 5000);
-  assert.equal(counted.url, 'https://www.linkedin.com/jobs/alignerr-jobs-worldwide');
+  assert.notEqual(counted.count, 2);
   assert.equal(counted.lowerBound, true);
   assert.equal(counted.scope, 'open_ended');
+  assert.equal(counted.scopeSite, 'LinkedIn');
+  assert.match(counted.url, /alignerr-jobs-worldwide/);
   assert.equal(workforce.score, 0);
-  assert.equal(workforce.label, '2,538 employees / 5,000+ open roles on LinkedIn = at least 2:1');
+  assert.match(workforce.label, /at least 5,000/);
+  assert.doesNotMatch(workforce.label, /\b2 open roles\b/);
 });
 
 test('a scoped aggregator count is a floor when it is the only citation', async () => {
@@ -698,6 +794,83 @@ test('a scoped aggregator count is a floor when it is the only citation', async 
   assert.match(workforce.detail, /not scored/);
 });
 
+test('a Harrison Clarke 5,000+ company-page snippet is rejected and 46 jobs is kept', async () => {
+  const rejected = await resolveOpenJobCount('Harrison Clarke', {
+    platform: 'LINKEDIN',
+    hostname: 'www.linkedin.com',
+    jobUrl: 'https://www.linkedin.com/jobs/view/4474346769',
+    glassdoorOpenJobs: 0
+  }, citationDeps({
+    results: [{
+      title: 'Harrison Clarke | LinkedIn',
+      snippet: 'Harrison Clarke. 5,000+ open roles on LinkedIn.',
+      url: 'https://www.linkedin.com/company/harrisonclarke'
+    }],
+    answer: 'The company page lists 5,000+ open roles.'
+  }));
+  const accepted = await resolveOpenJobCount('Harrison Clarke', {
+    platform: 'LINKEDIN',
+    hostname: 'www.linkedin.com',
+    jobUrl: 'https://www.linkedin.com/jobs/view/4474346769',
+    glassdoorOpenJobs: 0
+  }, citationDeps({
+    results: [{
+      title: 'Harrison Clarke Jobs',
+      snippet: 'Harrison Clarke has 46 jobs.',
+      url: 'https://www.linkedin.com/jobs/harrison-clarke-jobs-worldwide?f_C=5114934'
+    }],
+    answer: 'should not be asked'
+  }));
+
+  const searchCap = await resolveOpenJobCount('Harrison Clarke', {
+    platform: 'LINKEDIN',
+    hostname: 'www.linkedin.com',
+    jobUrl: 'https://www.linkedin.com/jobs/view/4474346769',
+    glassdoorOpenJobs: 0
+  }, citationDeps({
+    results: [{
+      title: 'Harrison Clarke jobs',
+      snippet: '5,000+ Harrison Clarke jobs.',
+      url: 'https://www.linkedin.com/jobs/search/?keywords=Harrison%20Clarke'
+    }],
+    answer: 'The search lists 5,000+ jobs.'
+  }));
+
+  assert.equal(rejected, null);
+  assert.equal(searchCap, null);
+  assert.equal(accepted.count, 46);
+  assert.equal(accepted.source, 'page');
+  assert.match(accepted.url, /harrison-clarke-jobs-worldwide/);
+  assert.match(accepted.url, /f_C=5114934/);
+});
+
+test('a 330 to 1 ratio from a snippet citation is not displayed', () => {
+  const cited = resolveWorkforce({
+    employees: 15,
+    employeeLabel: '15',
+    openJobs: 4950,
+    openJobsSource: 'search',
+    openJobsEstimated: true,
+    openJobsSourceUrl: 'https://www.linkedin.com/company/harrisonclarke'
+  });
+  const confirmed = resolveWorkforce({
+    employees: 15,
+    employeeLabel: '15',
+    openJobs: 4950,
+    openJobsSource: 'page',
+    openJobsEstimated: false,
+    openJobsSourceUrl: 'https://www.linkedin.com/jobs/harrison-clarke-jobs-worldwide?f_C=5114934'
+  });
+
+  assert.equal(cited.ratio, null);
+  assert.equal(cited.openRoles, null);
+  assert.equal(cited.score, 0);
+  assert.doesNotMatch(cited.label, /:1/);
+  assert.match(cited.label, /15 employees/);
+  assert.equal(confirmed.ratio, 330);
+  assert.match(confirmed.label, /330:1/);
+});
+
 test('a result index in the model answer is not an open-roles count', async () => {
   const counted = await resolveOpenJobCount('Alignerr', {
     platform: 'LINKEDIN',
@@ -727,7 +900,117 @@ test('a result index in the model answer is not an open-roles count', async () =
   }));
 
   assert.equal(counted.count, 5000);
-  assert.equal(counted.url, 'https://www.linkedin.com/jobs/alignerr-jobs-worldwide');
   assert.equal(counted.lowerBound, true);
-  assert.equal(counted.scope, 'open_ended');
+  assert.notEqual(counted.count, 2);
+  assert.match(counted.url, /alignerr-jobs-worldwide/);
+});
+
+test('a verified Greenhouse board is title-matched from the jobs fetch and not returned', async () => {
+  const lines = [];
+  const original = console.info;
+  console.info = (message, details) => {
+    if (message === '[GHD] careers check') {
+      lines.push(details);
+    }
+  };
+
+  try {
+    const counted = await resolveOpenJobCount('Stripe', {
+      website: 'https://boards.greenhouse.io/stripe',
+      jobTitle: 'Software Engineer, Payments'
+    }, {
+      now: NOW,
+      cache: new MemoryCache(),
+      webSearch: async () => {
+        throw new Error('no extra search');
+      },
+      fetch: async () => ({
+        ok: true,
+        async json() {
+          return {
+            jobs: [
+              { id: 1, title: 'Software Engineer, Payments' },
+              { id: 2, title: 'Account Executive' }
+            ]
+          };
+        }
+      })
+    });
+
+    assert.equal(counted.count, 2);
+    assert.equal(counted.source, 'greenhouse');
+    assert.equal(counted.titles, undefined);
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0].outcome, 'found');
+    assert.equal(lines[0].board, 'greenhouse');
+    assert.equal(lines[0].jobCount, 2);
+    assert.deepEqual(lines[0].overlap, {
+      shared: ['software', 'engineer', 'payments'],
+      dropped: [],
+      introduced: []
+    });
+    assert.equal(lines[0].matchedTitle, 'Software Engineer, Payments');
+
+    const missed = [];
+    console.info = (message, details) => {
+      if (message === '[GHD] careers check') {
+        missed.push(details);
+      }
+    };
+    const board = {
+      ok: true,
+      async json() {
+        return {
+          jobs: [
+            { id: 1, title: 'Software Engineer, Payments' },
+            { id: 2, title: 'Software Engineer, Developer Platform' },
+            { id: 3, title: 'Staff Product Engineer - Americas' },
+            { id: 4, title: 'Senior Software Engineer - Egress (Go/Rust)' }
+          ]
+        };
+      }
+    };
+    const cases = [
+      ['Director of Horse Husbandry', 'not found', 'Software Engineer, Payments'],
+      ['Software Engineer, AI Platform', 'not found', 'Software Engineer, Developer Platform'],
+      ['Product Support Engineer - Americas', 'not found', 'Staff Product Engineer - Americas'],
+      ['Engineering Manager, Web Infrastructure', 'not found', 'Software Engineer, Payments'],
+      ['Software Engineer - Egress (Go/Rust)', 'found', 'Senior Software Engineer - Egress (Go/Rust)']
+    ];
+
+    const seen = new Map();
+
+    for (const [jobTitle, outcome, matchedTitle] of cases) {
+      missed.length = 0;
+      await resolveOpenJobCount('Stripe', {
+        website: 'https://boards.greenhouse.io/stripe',
+        jobTitle
+      }, {
+        now: new Date('2026-10-01T13:00:00Z'),
+        cache: new MemoryCache(),
+        fetch: async () => board
+      });
+      assert.equal(missed[0].outcome, outcome, jobTitle);
+      assert.equal(missed[0].matchedTitle, matchedTitle, jobTitle);
+      seen.set(jobTitle, missed[0].overlap);
+    }
+
+    assert.deepEqual(seen.get('Software Engineer, AI Platform'), {
+      shared: ['software', 'engineer', 'platform'],
+      dropped: ['ai'],
+      introduced: ['developer']
+    });
+    assert.deepEqual(seen.get('Product Support Engineer - Americas'), {
+      shared: ['product', 'engineer', 'americas'],
+      dropped: ['support'],
+      introduced: []
+    });
+    assert.deepEqual(seen.get('Software Engineer - Egress (Go/Rust)'), {
+      shared: ['software', 'engineer', 'egress', 'go', 'rust'],
+      dropped: [],
+      introduced: []
+    });
+  } finally {
+    console.info = original;
+  }
 });

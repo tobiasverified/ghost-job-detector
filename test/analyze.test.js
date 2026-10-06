@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { MemoryRateLimiter } from '../lib/server/rateLimit.js';
-import { analysisCacheKey, analyzeJobPosting, createAnalyzeHandler, createReviewsHandler, FACTOR_VERSIONS, resolveWorkforce } from '../lib/server/analyze.js';
+import { analysisCacheKey, analyzeJobPosting, createAnalyzeHandler, createReviewsHandler, FACTOR_VERSIONS, resolveCompanyReview, resolveWorkforce } from '../lib/server/analyze.js';
 
 const NOW = new Date('2026-09-25T12:00:00Z');
 const SECRET = 'super-secret-news-key';
@@ -418,6 +418,25 @@ test('without a waitUntil, cache writes are awaited as before', async () => {
   assert.equal(deferWrites(backing, null), backing);
 });
 
+test('a deferred full check leaves repost search to the follow-up request', async () => {
+  const queries = [];
+  const result = await analyzeJobPosting({
+    title: 'Engineer',
+    company: 'Initech',
+    description: 'Build services for a large product organization with clear ownership and documented reviews.',
+    deferReposts: true
+  }, layoffDeps({
+    webSearch: async (query) => {
+      queries.push(query);
+      return [];
+    }
+  }));
+
+  assert.equal(result.factors.reposts.pending, true);
+  assert.equal(result.factors.reposts.score, 0);
+  assert.equal(queries.some((query) => /Engineer Initech/i.test(query)), false);
+});
+
 test('an analysis cache hit still rechecks reposts when the factor version matches', async () => {
   const cache = new MemoryCache();
   let repostReads = 0;
@@ -470,4 +489,17 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   assert.equal(fromSearchCache.factors.reposts.count, 1);
   assert.equal(repostReads, 0);
   assert.equal(stored.factors.layoffs, refreshed.factors.layoffs);
+});
+
+test('a glassdoor profile keeps its review count and drops a missing one', async () => {
+  const counted = await resolveCompanyReview('Harrison Clarke', {}, { overall: 4.5, reviewCount: 43 });
+  const missing = await resolveCompanyReview('Harrison Clarke', {}, { overall: 3.7 });
+  const zero = await resolveCompanyReview('Harrison Clarke', {}, { overall: 3.7, reviewCount: 0 });
+
+  assert.equal(counted.rating, 4.5);
+  assert.equal(counted.reviewCount, 43);
+  assert.equal(counted.platform, 'Glassdoor');
+  assert.equal(missing.rating, 3.7);
+  assert.equal(missing.reviewCount, null);
+  assert.equal(zero.reviewCount, null);
 });

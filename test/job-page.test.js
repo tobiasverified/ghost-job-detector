@@ -315,6 +315,140 @@ test('UMiami description phrases resolve to the Wikidata label, not the site acr
   assert.equal(sony, 'Sony Global');
 });
 
+function argonnePosting(includeLaboratory) {
+  const opening = 'We are seeking an operational expert to drive the implementation of artificial intelligence (AI) capabilities within Argonne’s Physical Sciences and Engineering Operations division. ';
+  const middle = 'The team supports model deployment, monitoring, and incident response for research computing platforms. '.repeat(12);
+  const partners = 'Research is supported by the Department of Energy and operated with the University of Chicago Medical Center.';
+  const closing = includeLaboratory
+    ? `Argonne National Laboratory is committed to a safe and welcoming workplace. ${partners}`
+    : partners;
+  return `${opening}${middle}${closing}`;
+}
+
+test('a bare Workday site name takes a laboratory phrase from the full description', async () => {
+  const pages = loadPageHelper();
+  const description = argonnePosting(true);
+  const head = description.replace(/\s+/g, ' ').trim().slice(0, 800);
+  const windowed = pages.extractDescriptionCandidates(description);
+  const full = pages.extractDescriptionCandidates(description, { full: true });
+  const searches = [];
+  const signals = {
+    jobTitle: 'AI Operations Engineer',
+    description,
+    organization: 'UChicago Argonne, LLC',
+    siteId: 'Argonne_Careers',
+    hostname: 'argonne.wd1.myworkdayjobs.com',
+    pathname: '/en-US/Argonne_Careers/job/Lemont-IL-USA/AI-Operations-Engineer_423470'
+  };
+  const deps = {
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'Argonne National Laboratory') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q6446', label: 'Argonne National Laboratory' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q6446') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q6446: {
+                  labels: { en: { value: 'Argonne National Laboratory' } },
+                  aliases: { en: [{ value: 'Argonne' }] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      throw new Error(`unexpected Wikidata request ${search || ids || url}`);
+    }
+  };
+
+  assert.equal(head.includes('Argonne National Laboratory'), false);
+  assert.equal(windowed.includes('Argonne National Laboratory'), false);
+  assert.equal(full.includes('Argonne National Laboratory'), true);
+  assert.equal(full.some((candidate) => candidate.includes('University of Chicago')), true);
+  assert.equal(full.includes('Department of Energy'), false);
+
+  const company = await pages.resolveCompanyIdentity(signals, deps);
+
+  assert.equal(company, 'Argonne National Laboratory');
+  assert.equal(company === 'Argonne' || company === 'UChicago Argonne, LLC', false);
+  assert.deepEqual(searches, ['Argonne National Laboratory']);
+});
+
+test('a funder named beside a bare site word does not become the company', async () => {
+  const pages = loadPageHelper();
+  const description = argonnePosting(false);
+  const searches = [];
+  const company = await pages.resolveCompanyIdentity({
+    jobTitle: 'AI Operations Engineer',
+    description,
+    organization: 'UChicago Argonne, LLC',
+    siteId: 'Argonne_Careers',
+    hostname: 'argonne.wd1.myworkdayjobs.com'
+  }, {
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'UChicago Argonne, LLC') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q131252', label: 'University of Chicago' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q131252') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q131252: {
+                  labels: { en: { value: 'University of Chicago' } },
+                  aliases: { en: [{ value: 'UChicago' }] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      throw new Error(`unexpected Wikidata request ${search || ids || url}`);
+    }
+  });
+
+  assert.equal(company, 'Argonne');
+  assert.equal(company === 'University of Chicago' || company === 'Department of Energy', false);
+  assert.equal(searches.includes('University of Chicago'), false);
+  assert.equal(searches.includes('University of Chicago Medical Center'), false);
+  assert.equal(searches.includes('Department of Energy'), false);
+  assert.deepEqual(searches, ['UChicago Argonne, LLC']);
+});
+
 test('a stub description retries identity resolution until the organization phrase is present', async () => {
   const pages = loadPageHelper();
   const real = `${'The University of Miami Health System ("UHealth") provides patient care across Miami-Dade. '}${'Clinical systems support for Epic analysts. '.repeat(6)}`;

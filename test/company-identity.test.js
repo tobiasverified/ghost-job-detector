@@ -250,3 +250,137 @@ test('a health-system phrase falls through to the university alias U Miami (FL)'
   );
   assert.equal(calls.every((call) => call.userAgent.startsWith('GhostJobDetector/')), true);
 });
+
+function argonnePosting(includeLaboratory) {
+  const opening = 'We are seeking an operational expert to drive the implementation of artificial intelligence (AI) capabilities within Argonne’s Physical Sciences and Engineering Operations division. ';
+  const middle = 'The team supports model deployment, monitoring, and incident response for research computing platforms. '.repeat(12);
+  const partners = 'Research is supported by the Department of Energy and operated with the University of Chicago Medical Center.';
+  const closing = includeLaboratory
+    ? `Argonne National Laboratory is committed to a safe and welcoming workplace. ${partners}`
+    : partners;
+  return `${opening}${middle}${closing}`;
+}
+
+test('a bare company name resolves from a laboratory phrase past the first 800 characters', async () => {
+  const description = argonnePosting(true);
+  const searches = [];
+  let groqCalls = 0;
+  const company = await resolveCompanyIdentity({
+    rawName: 'Argonne',
+    description,
+    organization: 'UChicago Argonne, LLC',
+    hostname: 'argonne.wd1.myworkdayjobs.com',
+    platform: 'WORKDAY'
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    askGroq: async () => {
+      groqCalls += 1;
+      return 'University of Chicago';
+    },
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'Argonne National Laboratory') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q6446', label: 'Argonne National Laboratory' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q6446') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q6446: {
+                  labels: { en: { value: 'Argonne National Laboratory' } },
+                  aliases: { en: [{ value: 'Argonne' }] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      return { ok: true, async json() { return { search: [] }; } };
+    }
+  });
+
+  assert.equal(description.replace(/\s+/g, ' ').trim().slice(0, 800).includes('Argonne National Laboratory'), false);
+  assert.equal(company, 'Argonne National Laboratory');
+  assert.equal(company === 'University of Chicago' || company === 'Department of Energy', false);
+  assert.deepEqual(searches, ['Argonne National Laboratory']);
+  assert.equal(groqCalls, 0);
+});
+
+test('Department of Energy and University of Chicago do not replace a bare name', async () => {
+  const searches = [];
+  let groqCalls = 0;
+  const company = await resolveCompanyIdentity({
+    rawName: 'Argonne',
+    description: argonnePosting(false),
+    organization: 'UChicago Argonne, LLC',
+    hostname: 'argonne.wd1.myworkdayjobs.com',
+    platform: 'WORKDAY'
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    askGroq: async () => {
+      groqCalls += 1;
+      return 'Department of Energy';
+    },
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'UChicago Argonne, LLC') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q131252', label: 'University of Chicago' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q131252') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q131252: {
+                  labels: { en: { value: 'University of Chicago' } },
+                  aliases: { en: [] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      return { ok: true, async json() { return { search: [] }; } };
+    }
+  });
+
+  assert.equal(company, 'Argonne');
+  assert.equal(company === 'University of Chicago' || company === 'Department of Energy', false);
+  assert.equal(searches.includes('University of Chicago'), false);
+  assert.equal(searches.includes('Department of Energy'), false);
+  assert.deepEqual(searches, ['UChicago Argonne, LLC']);
+  assert.equal(groqCalls, 0);
+});
