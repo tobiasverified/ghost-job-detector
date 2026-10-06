@@ -826,3 +826,32 @@ test('pay vs market uses the three placement phrases and keeps each job separate
   assert.match(page.panel.innerHTML, /above the 75th/);
   assert.match(page.panel.innerHTML, /Listed \$200K · Market median \$142K/);
 });
+
+test('a seniority title without stated years keeps the posted pay and does not ask for a market estimate', async () => {
+  const page = loadWidget({ holdPay: true });
+
+  await page.widget.analyze(payJob({
+    jobId: 'senior-pay',
+    title: 'Senior Data Scientist',
+    salary: '$130k - $160k',
+    description: 'You will build Python services. Specific duties are listed for each quarter of the year.'
+  }));
+  await finishCheck(page);
+
+  assert.match(page.panel.innerHTML, /Listed \$130-160K/);
+  assert.doesNotMatch(page.panel.innerHTML, /Market median/);
+  assert.equal(page.sent.some((message) => message.type === 'PAY_MARKET'), false);
+
+  const stated = loadWidget({ holdPay: true });
+
+  await stated.widget.analyze(payJob({
+    jobId: 'years-pay',
+    salary: '$130k - $160k'
+  }));
+  await finishCheck(stated);
+
+  const message = stated.sent.find((item) => item.type === 'PAY_MARKET');
+  assert.equal(message.body.description.includes('5 years of experience'), true);
+  stated.reply(2, { compared: false });
+  await flush();
+});

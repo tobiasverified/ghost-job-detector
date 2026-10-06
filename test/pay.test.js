@@ -104,10 +104,14 @@ test('company salary rows are read from base pay, not total pay', () => {
   assert.equal(pay.companyBasePay(COMPANY, 'Data Scientist'), null);
 });
 
-test('the market cache is title and location only, 14 days for a hit and 5 minutes for a failure', async () => {
+test('the market cache is title, location, and experience, 14 days for a hit and 5 minutes for a failure', async () => {
   assert.equal(
-    marketCacheKey('Software Engineer', 'New York, NY'),
+    marketCacheKey('Software Engineer', 'New York, NY', 'all'),
     marketCacheKey('software engineer', 'new york ny')
+  );
+  assert.notEqual(
+    marketCacheKey('Software Engineer', 'New York, NY', 'all'),
+    marketCacheKey('Software Engineer', 'New York, NY', 'four_to_six')
   );
   assert.equal(marketCacheKey('Software Engineer', 'New York, NY').includes('capital'), false);
 
@@ -167,6 +171,61 @@ test('the market cache is title and location only, 14 days for a hit and 5 minut
     await failed.get(marketCacheKey('Software Engineer', 'Hartford, CT'), new Date(NOW.getTime() + MARKET_RETRY_TTL_MS + 1000)),
     null
   );
+});
+
+test('stated years select a Glassdoor band, and seniority without years is not compared', async () => {
+  assert.equal(pay.experienceChoice('Software Engineer', 'Build services.').bucket, 'all');
+  assert.equal(pay.experienceChoice('Engineering Leadership', 'Build services.').bucket, 'all');
+  assert.equal(pay.experienceChoice('Software Engineer', '5 years of experience').bucket, 'four_to_six');
+  assert.equal(pay.experienceChoice('Software Engineer', '3-5 years of experience').bucket, 'one_to_three');
+  assert.equal(pay.experienceChoice('Software Engineer', 'less than 1 year of experience').bucket, 'less_than_one');
+  assert.equal(pay.experienceChoice('Software Engineer', '1 year of experience').bucket, 'one_to_three');
+  assert.equal(pay.experienceChoice('Software Engineer', '8+ years of experience').bucket, 'seven_to_nine');
+  assert.equal(pay.experienceChoice('Software Engineer', '10 years of experience').bucket, 'ten_to_fourteen');
+  assert.equal(pay.experienceChoice('Software Engineer', '15+ years of experience').bucket, 'above_fifteen');
+  assert.equal(pay.experienceChoice('Software Engineer', 'The firm is 10 years old.').bucket, 'all');
+
+  for (const title of ['Senior Engineer', 'Staff Engineer', 'Lead Engineer', 'Principal Engineer', 'Junior Engineer', 'Associate Engineer', 'Engineering Intern']) {
+    const choice = pay.experienceChoice(title, 'Build services for customers.');
+    assert.equal(choice.skip, true, title);
+    assert.equal(choice.reason, 'seniority');
+  }
+
+  assert.equal(pay.experienceChoice('Senior Engineer', '7 years of experience').bucket, 'seven_to_nine');
+
+  const calls = [];
+  const deps = {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: 'rapid-test' },
+    fetch: async (url) => {
+      calls.push(String(url));
+      return jsonResponse(200, ESTIMATE);
+    }
+  };
+  const senior = await lookupPayVsMarket({
+    title: 'Senior Software Engineer',
+    location: 'Hartford, CT',
+    salary: '$130k-$160k',
+    description: 'Own the roadmap.'
+  }, deps);
+
+  assert.equal(senior.compared, false);
+  assert.equal(senior.reason, 'seniority');
+  assert.equal(senior.text, 'Listed $130-160K');
+  assert.equal(calls.length, 0);
+
+  const banded = await lookupPayVsMarket({
+    title: 'Software Engineer',
+    location: 'New York, NY',
+    salary: '$130k-$160k',
+    description: '7 years of experience required.'
+  }, deps);
+
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /years_of_experience=seven_to_nine/);
+  assert.equal(banded.compared, true);
+  assert.equal(banded.note, 'within the range');
 });
 
 test('pay-vs-market counts against the same hourly limit', async () => {

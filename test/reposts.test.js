@@ -514,7 +514,7 @@ test('the score widget ranks a confirmed duplicate above an old ATS posting', ()
     },
     { rating: null, unavailable: false, score: 0 },
     { score: 0, available: true, unavailable: false }
-  ).find((factor) => factor.label === 'Employees vs Open Jobs');
+  ).find((factor) => factor.label === 'Company size');
 
   assert.equal(found.value, '2 other postings');
   assert.equal(found.entries.length, 2);
@@ -534,7 +534,7 @@ test('the score widget ranks a confirmed duplicate above an old ATS posting', ()
     },
     { rating: null, unavailable: false, score: 0 },
     { score: 0, available: true, unavailable: false }
-  ).find((factor) => factor.label === 'Employees vs Open Jobs');
+  ).find((factor) => factor.label === 'Company size');
 
   const headcountOnly = sandbox.module.exports.buildFactors(
     { score: 0, label: 'Clear' },
@@ -547,7 +547,7 @@ test('the score widget ranks a confirmed duplicate above an old ATS posting', ()
     },
     { rating: null, unavailable: false, score: 0 },
     { score: 0, available: true, unavailable: false }
-  ).find((factor) => factor.label === 'Employees vs Open Jobs');
+  ).find((factor) => factor.label === 'Company size');
 
   const precise = sandbox.module.exports.buildFactors(
     { score: 0, label: 'Clear' },
@@ -562,7 +562,7 @@ test('the score widget ranks a confirmed duplicate above an old ATS posting', ()
     },
     { rating: null, unavailable: false, score: 0 },
     { score: 0, available: true, unavailable: false }
-  ).find((factor) => factor.label === 'Employees vs Open Jobs');
+  ).find((factor) => factor.label === 'Company size');
 
   assert.equal(estimated.value, '10,000 employees / 1,844 open roles = 0.18:1 ratio (estimated)');
   assert.equal(precise.value, '12,057 employees / 75 open roles = 0.01:1 ratio');
