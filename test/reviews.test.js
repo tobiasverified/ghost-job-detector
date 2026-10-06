@@ -457,3 +457,29 @@ test('Amazon the retailer is rejected for Amazon Web Services', async () => {
   assert.equal(review.hitsRejected, true);
   assert.equal(review.detail, 'No public reviews found');
 });
+
+test('Indeed is not started when under 1.5 seconds of the review budget remain', async () => {
+  const calls = [];
+  const review = await findCompanyReviews('Acme', {
+    reviewSearchBudgetMs: 1000,
+    webSearch: async (query, options = {}) => {
+      calls.push(options.includeDomains?.[0]);
+      return [];
+    }
+  });
+
+  assert.deepEqual(calls, ['glassdoor.com']);
+  assert.equal(review.searchFailed, undefined);
+  assert.equal(review.unavailable, false);
+  assert.equal(review.detail, 'No public reviews found');
+
+  const room = [];
+  await findCompanyReviews('Northwind', {
+    reviewSearchBudgetMs: 2000,
+    webSearch: async (query, options = {}) => {
+      room.push(options.includeDomains?.[0]);
+      return [];
+    }
+  });
+  assert.deepEqual(room, ['glassdoor.com', 'indeed.com']);
+});

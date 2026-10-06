@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { resolveWorkforce } from '../lib/server/analyze.js';
+import { companyLookupName } from '../lib/server/companies.js';
 import { createCompanyRatingHandler, glassdoorEntityMatches, lookupCompanyRating, parseEmployeeSize, ratingCacheKey } from '../lib/server/company-rating.js';
 import { scoreHiringRatio } from '../lib/server/workforce.js';
 import { MemoryRateLimiter } from '../lib/server/rateLimit.js';
@@ -1165,4 +1166,55 @@ test('a Glassdoor name rejection lasts an hour and a rating is kept on refresh',
   const kept = await lookupCompanyRating('Acme', input({ refresh: true }));
   assert.equal(kept.overall, 4.1);
   assert.equal(calls, 0);
+});
+
+test('trailing country and legal words are stripped for lookup, and the posted name stays for display', async () => {
+  assert.equal(companyLookupName('Baker Tilly US'), 'Baker Tilly');
+  assert.equal(companyLookupName('Baker Tilly US LLP'), 'Baker Tilly');
+  assert.equal(companyLookupName('Baker Tilly, LLP'), 'Baker Tilly');
+  assert.equal(companyLookupName('Acme North America'), 'Acme');
+  assert.equal(companyLookupName('Acme Canada'), 'Acme');
+  assert.equal(companyLookupName('Acme Americas'), 'Acme');
+  assert.equal(companyLookupName('Acme USA'), 'Acme');
+  assert.equal(companyLookupName('Acme GmbH'), 'Acme');
+  assert.equal(companyLookupName('US Bank'), 'US Bank');
+  assert.equal(companyLookupName('US Steel'), 'US Steel');
+  assert.equal(companyLookupName('Harrison Clarke'), 'Harrison Clarke');
+  assert.equal(companyLookupName('Care.com'), 'Care.com');
+  assert.equal(companyLookupName('UPS (United Parcel Service)'), 'UPS (United Parcel Service)');
+  assert.equal(companyLookupName('Amazon Web Services (AWS)'), 'Amazon Web Services');
+  assert.equal(companyLookupName('Deloitte (UK)'), 'Deloitte');
+  assert.equal(companyLookupName('TKO Group Holdings'), 'TKO Group Holdings');
+  assert.equal(companyLookupName('Ford Motor Company'), 'Ford Motor Company');
+  assert.equal(glassdoorEntityMatches('Harrison Clarke', 'Clarke'), false);
+  assert.equal(glassdoorEntityMatches('Baker Tilly US', 'Baker Tilly'), true);
+
+  const calls = [];
+  const rating = await lookupCompanyRating('Baker Tilly US', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: async (url) => {
+      const href = String(url);
+      calls.push(href);
+
+      if (href.includes('wikidata.org')) {
+        return jsonResponse(200, { search: [] });
+      }
+
+      return jsonResponse(200, {
+        name: 'Baker Tilly',
+        id: '249007',
+        website: 'https://www.bakertilly.com',
+        ratings: { overall: 3.6 },
+        size: '5001 to 10000 Employees',
+        counts: { reviews: 2485, open_jobs: 30 }
+      });
+    }
+  });
+
+  assert.equal(calls.some((href) => /company=Baker\+Tilly(?:&|$)/.test(href)), true);
+  assert.equal(calls.some((href) => /company=Baker\+Tilly\+US(?:&|$)/.test(href)), false);
+  assert.equal(rating.overall, 3.6);
+  assert.equal(rating.reviewCount, 2485);
 });
