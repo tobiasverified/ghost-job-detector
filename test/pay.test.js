@@ -157,6 +157,7 @@ test('the market cache is title, location, and experience, 14 days for a hit and
   const deps = {
     now: NOW,
     cache,
+    payCompareEnabled: true,
     env: { RAPIDAPI_KEY: 'rapid-test' },
     fetch: async (url) => {
       calls.push(String(url));
@@ -192,6 +193,7 @@ test('the market cache is title, location, and experience, 14 days for a hit and
   const quotaDeps = {
     now: NOW,
     cache: failed,
+    payCompareEnabled: true,
     env: { RAPIDAPI_KEY: 'rapid-test' },
     fetch: async () => {
       quotaCalls += 1;
@@ -234,6 +236,7 @@ test('stated years select a Glassdoor band, and seniority without years is not c
   const deps = {
     now: NOW,
     cache: new MemoryCache(),
+    payCompareEnabled: true,
     env: { RAPIDAPI_KEY: 'rapid-test' },
     fetch: async (url) => {
       calls.push(String(url));
@@ -272,7 +275,7 @@ test('pay-vs-market counts against the same hourly limit', async () => {
     now: NOW,
     cache: new MemoryCache(),
     rateLimit: new MemoryRateLimiter(1),
-    env: { RAPIDAPI_KEY: 'rapid-test' },
+    env: { RAPIDAPI_KEY: 'rapid-test', PAY_COMPARE_ENABLED: '1' },
     fetch: async () => jsonResponse(200, ESTIMATE)
   });
   const headers = { 'x-ghd-client': 'ghost-job-detector', 'x-forwarded-for': '203.0.113.40' };
@@ -335,6 +338,25 @@ test('the default check shows company size and does not search for open roles or
   assert.equal(analysis.factors.hiringRatio.score, 0);
   assert.equal(analysis.factors.hiringRatio.label, '501 to 1000 Employees');
   assert.equal(analysis.careersChecked, true);
+  assert.equal(analysis.payCompareEnabled, false);
+
+  const skipped = [];
+  const held = await lookupPayVsMarket({
+    title: 'Software Engineer',
+    location: 'New York, NY',
+    salary: '$130k-$160k'
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: 'rapid-test' },
+    fetch: async (url) => {
+      skipped.push(String(url));
+      return jsonResponse(200, ESTIMATE);
+    }
+  });
+  assert.equal(held.compared, false);
+  assert.equal(held.reason, 'disabled');
+  assert.equal(skipped.length, 0);
   assert.equal(analysis.careers, null);
   assert.equal(companySizeLine({
     employees: 1200,

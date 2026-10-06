@@ -131,6 +131,10 @@ const description = 'You will build Python services with 5 years of experience. 
 const jobA = { jobId: '101', title: 'Analyst', company: 'Acme', description, url: 'https://www.linkedin.com/jobs/view/101' };
 const jobB = { jobId: '202', title: 'Engineer', company: 'Initech', description, url: 'https://www.linkedin.com/jobs/view/202' };
 
+function payAnalysis(rating = 4.2) {
+  return { ...remoteAnalysis(rating), payCompareEnabled: true };
+}
+
 function remoteAnalysis(rating) {
   return {
     ghostScore: 10,
@@ -724,21 +728,26 @@ async function finishCheck(page, body = remoteAnalysis(4.2)) {
 test('pay vs market stays on the posted range until the comparison returns', async () => {
   const missing = loadWidget({ holdPay: true });
   await missing.widget.analyze(payJob({ jobId: 'no-pay', salary: '' }));
-  assert.match(missing.panel.innerHTML, /Pay vs market/);
-  assert.match(missing.panel.innerHTML, /Salary not listed/);
+  assert.doesNotMatch(missing.panel.innerHTML, /Pay vs market/);
   await finishCheck(missing);
   assert.equal(missing.sent.some((message) => message.type === 'PAY_MARKET'), false);
-  assert.match(missing.panel.innerHTML, /Salary not listed/);
+  assert.doesNotMatch(missing.panel.innerHTML, /Pay vs market/);
+
+  const unnamed = loadWidget({ holdPay: true });
+  await unnamed.widget.analyze(payJob({ jobId: 'flag-no-pay', salary: '' }));
+  await finishCheck(unnamed, payAnalysis());
+  assert.equal(unnamed.sent.some((message) => message.type === 'PAY_MARKET'), false);
+  assert.match(unnamed.panel.innerHTML, /Salary not listed/);
 
   const listed = loadWidget({ holdPay: true });
   await listed.widget.analyze(payJob({ salary: '$130k - $160k' }));
-  assert.match(listed.panel.innerHTML, /Listed \$130-160K/);
+  assert.doesNotMatch(listed.panel.innerHTML, /Pay vs market/);
   assert.equal(listed.sent.some((message) => message.type === 'PAY_MARKET'), false);
 
   listed.click('ghd-full');
   await flush();
   assert.equal(listed.sent.some((message) => message.type === 'PAY_MARKET'), false);
-  listed.reply(0, remoteAnalysis(4.2));
+  listed.reply(0, payAnalysis());
   await flush();
 
   const payMessage = listed.sent.find((message) => message.type === 'PAY_MARKET');
@@ -748,7 +757,7 @@ test('pay vs market stays on the posted range until the comparison returns', asy
   assert.match(listed.panel.innerHTML, /Listed \$130-160K/);
   assert.doesNotMatch(listed.panel.innerHTML, /Market median/);
 
-  listed.reply(1, remoteAnalysis(4.2));
+  listed.reply(1, payAnalysis());
   await flush();
   const before = listed.panel.innerHTML.match(/class="number">(\d+)/)?.[1];
   listed.reply(2, {
@@ -764,7 +773,7 @@ test('pay vs market stays on the posted range until the comparison returns', asy
 
   const failed = loadWidget({ holdPay: true });
   await failed.widget.analyze(payJob({ jobId: 'pay-fail', salary: '$130,000 - $160,000' }));
-  await finishCheck(failed);
+  await finishCheck(failed, payAnalysis());
   failed.fail(2);
   await flush();
   assert.match(failed.panel.innerHTML, /Listed \$130-160K/);
@@ -781,7 +790,7 @@ test('pay vs market uses the three placement phrases and keeps each job separate
   for (const [salary, note] of phrases) {
     const page = loadWidget({ holdPay: true });
     await page.widget.analyze(payJob({ jobId: note, salary }));
-    await finishCheck(page);
+    await finishCheck(page, payAnalysis());
     page.reply(2, {
       compared: true,
       text: `Listed pay · Market median $142K for this title in Hartford (80 reports)`,
@@ -806,7 +815,7 @@ test('pay vs market uses the three placement phrases and keeps each job separate
   });
 
   await page.widget.analyze(first);
-  await finishCheck(page);
+  await finishCheck(page, payAnalysis());
   page.reply(2, {
     compared: true,
     text: 'Listed $200K · Market median $142K for this title in Hartford (80 reports)',
@@ -817,7 +826,7 @@ test('pay vs market uses the three placement phrases and keeps each job separate
 
   await page.widget.analyze(second);
   await flush();
-  assert.match(page.panel.innerHTML, /Salary not listed/);
+  assert.doesNotMatch(page.panel.innerHTML, /Pay vs market/);
   assert.doesNotMatch(page.panel.innerHTML, /above the 75th/);
   assert.equal(page.sent.filter((message) => message.type === 'PAY_MARKET').length, 1);
 
@@ -836,7 +845,7 @@ test('a seniority title without stated years keeps the posted pay and does not a
     salary: '$130k - $160k',
     description: 'You will build Python services. Specific duties are listed for each quarter of the year.'
   }));
-  await finishCheck(page);
+  await finishCheck(page, payAnalysis());
 
   assert.match(page.panel.innerHTML, /Listed \$130-160K/);
   assert.doesNotMatch(page.panel.innerHTML, /Market median/);
@@ -848,7 +857,7 @@ test('a seniority title without stated years keeps the posted pay and does not a
     jobId: 'years-pay',
     salary: '$130k - $160k'
   }));
-  await finishCheck(stated);
+  await finishCheck(stated, payAnalysis());
 
   const message = stated.sent.find((item) => item.type === 'PAY_MARKET');
   assert.equal(message.body.description.includes('5 years of experience'), true);
