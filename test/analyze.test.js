@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { MemoryRateLimiter } from '../lib/server/rateLimit.js';
-import { analysisCacheKey, analyzeJobPosting, createAnalyzeHandler, createReviewsHandler, FACTOR_VERSIONS, resolveCompanyReview, resolveWorkforce } from '../lib/server/analyze.js';
+import { analysisCacheKey, analyzeJobPosting, createAnalyzeHandler, createReviewsHandler, FACTOR_VERSIONS, refreshIpCacheKey, resolveCompanyReview, resolveWorkforce, reviewCacheKey } from '../lib/server/analyze.js';
 
 const NOW = new Date('2026-09-25T12:00:00Z');
 const SECRET = 'super-secret-news-key';
@@ -639,4 +639,186 @@ test('reviews uses the validated Glassdoor rating without waiting for the headco
   const profileEnd = ends['factor: company profile (glassdoor+headcount)'];
   const reviewsEnd = ends['factor: reviews'];
   assert.ok(reviewsEnd + 200 < profileEnd, `reviews ended ${profileEnd - reviewsEnd}ms before the profile; expected about 300ms`);
+});
+
+test('negative reviews are capped from their write time and refresh skips them once', async () => {
+  const hour = 60 * 60 * 1000;
+  const day = 24 * hour;
+  const empty = {
+    rating: null,
+    reviewCount: null,
+    platform: null,
+    url: null,
+    score: 0,
+    unavailable: false,
+    detail: 'No public reviews found'
+  };
+  const job = {
+    title: 'Engineer',
+    company: 'Acme',
+    description: 'Build services for a large product organization with clear ownership and documented reviews.',
+    jobId: 'acme-1',
+    url: 'https://example.com/jobs/acme-1',
+    deferReposts: true
+  };
+  const key = reviewCacheKey(job.company);
+  const cache = new MemoryCache();
+  await cache.set(key, empty, 30 * day, new Date(NOW.getTime() - (2 * hour)));
+  const kept = await analyzeJobPosting(job, layoffDeps({ cache, webSearch: async () => [] }));
+  assert.equal(kept.factors.reviews.detail, 'No public reviews found');
+  assert.equal(kept.factors.reviews.rating, null);
+
+  cache.store.get(key).updatedAt = new Date(NOW.getTime() - (25 * hour)).toISOString();
+  cache.store.get(key).expiresAt = new Date(NOW.getTime() + day).toISOString();
+  const expired = await analyzeJobPosting(job, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Acme reviews',
+      url: 'https://www.glassdoor.com/Reviews/Acme-Reviews-E1.htm',
+      snippet: 'Rated 4.2 out of 5 from 80 reviews'
+    }]
+  }));
+  assert.equal(expired.factors.reviews.rating, 4.2);
+
+  const rejected = { ...empty, hitsRejected: true };
+  await cache.set(key, rejected, 30 * day, new Date(NOW.getTime() - (30 * 60 * 1000)));
+  const recentRejection = await analyzeJobPosting(job, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Acme reviews',
+      url: 'https://www.glassdoor.com/Reviews/Acme-Reviews-E1.htm',
+      snippet: 'Rated 1.1 out of 5 from 80 reviews'
+    }]
+  }));
+  assert.equal(recentRejection.factors.reviews.hitsRejected, true);
+  assert.equal(recentRejection.factors.reviews.rating, null);
+
+  cache.store.get(key).updatedAt = new Date(NOW.getTime() - (2 * hour)).toISOString();
+  cache.store.get(key).expiresAt = new Date(NOW.getTime() + day).toISOString();
+  const oldRejection = await analyzeJobPosting(job, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Acme reviews',
+      url: 'https://www.glassdoor.com/Reviews/Acme-Reviews-E1.htm',
+      snippet: 'Rated 4.8 out of 5 from 80 reviews'
+    }]
+  }));
+  assert.equal(oldRejection.factors.reviews.rating, 4.8);
+
+  await cache.set(key, empty, 30 * day, new Date(NOW.getTime() - (60 * 1000)));
+  const refreshed = await analyzeJobPosting({ ...job, refresh: true }, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Acme reviews',
+      url: 'https://www.glassdoor.com/Reviews/Acme-Reviews-E1.htm',
+      snippet: 'Rated 4.2 out of 5 from 80 reviews'
+    }]
+  }));
+  assert.equal(refreshed.factors.reviews.rating, 4.2);
+
+  await cache.set(key, empty, 30 * day, NOW);
+  const blocked = await analyzeJobPosting({ ...job, refresh: true }, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Acme reviews',
+      url: 'https://www.glassdoor.com/Reviews/Acme-Reviews-E1.htm',
+      snippet: 'Rated 1.0 out of 5 from 80 reviews'
+    }]
+  }));
+  assert.equal(blocked.factors.reviews.rating, null);
+  assert.equal(blocked.factors.reviews.detail, 'No public reviews found');
+});
+
+test('refresh recomputes a partial analysis and keeps a positive review', async () => {
+  const cache = new MemoryCache();
+  const job = {
+    title: 'Engineer',
+    company: 'Initech',
+    description: 'Build services for a large product organization with clear ownership and documented reviews.',
+    jobId: 'initech-1',
+    url: 'https://example.com/jobs/initech-1',
+    deferReposts: true,
+    refresh: true
+  };
+  await cache.set(analysisCacheKey(job), {
+    partial: true,
+    scoreWithheld: true,
+    ghostScore: null,
+    label: 'Some checks took too long',
+    factors: {
+      reviews: { rating: 1, unavailable: false, score: 0 },
+      vagueness: { score: 0, label: 'Clear' },
+      layoffs: { unavailable: false, detected: false, score: 0 },
+      hiringRatio: { available: false, timedOut: true, score: 0 },
+      reposts: { pending: true, score: 0, unavailable: true }
+    },
+    factorVersions: { ...FACTOR_VERSIONS },
+    checkedAt: NOW.toISOString()
+  }, 5 * 60 * 1000, NOW);
+  await cache.set(reviewCacheKey(job.company), {
+    rating: 4.4,
+    reviewCount: 40,
+    platform: 'Glassdoor',
+    url: 'https://www.glassdoor.com/Reviews/Initech-Reviews-E9.htm',
+    score: 5,
+    unavailable: false
+  }, 30 * 24 * 60 * 60 * 1000, new Date(NOW.getTime() - (10 * 24 * 60 * 60 * 1000)));
+
+  const result = await analyzeJobPosting(job, layoffDeps({
+    cache,
+    webSearch: async () => [{
+      title: 'Initech reviews',
+      url: 'https://www.glassdoor.com/Reviews/Initech-Reviews-E9.htm',
+      snippet: 'Rated 1.0 out of 5 from 40 reviews'
+    }]
+  }));
+
+  assert.equal(result.cached, false);
+  assert.equal(result.factors.reviews.rating, 4.4);
+});
+
+test('an IP can refresh ten times an hour and the next request is a normal check', async () => {
+  const cache = new MemoryCache();
+  const ip = '203.0.113.50';
+  const empty = {
+    rating: null,
+    reviewCount: null,
+    platform: null,
+    url: null,
+    score: 0,
+    unavailable: false,
+    detail: 'No public reviews found'
+  };
+  await cache.set(reviewCacheKey('Acme'), empty, 30 * 24 * 60 * 60 * 1000, NOW);
+  await cache.set(refreshIpCacheKey(ip), { count: 9, windowStart: NOW.toISOString() }, 60 * 60 * 1000, NOW);
+  let reviewSearches = 0;
+  const webSearch = async (query) => {
+    if (String(query).includes('reviews')) {
+      reviewSearches += 1;
+    }
+
+    return [];
+  };
+  const job = (id) => ({
+    title: 'Engineer',
+    company: 'Acme',
+    description: 'Build services for a large product organization with clear ownership and documented reviews.',
+    jobId: id,
+    url: `https://example.com/jobs/${id}`,
+    deferReposts: true,
+    refresh: true
+  });
+  await analyzeJobPosting(job('tenth'), layoffDeps({ cache, clientIp: ip, webSearch }));
+  assert.ok(reviewSearches > 0);
+  assert.equal((await cache.get(refreshIpCacheKey(ip), NOW)).count, 10);
+
+  const afterCap = reviewSearches;
+  const blocked = await analyzeJobPosting(job('eleventh'), layoffDeps({ cache, clientIp: ip, webSearch }));
+  assert.equal(reviewSearches, afterCap);
+  assert.equal(blocked.factors.reviews.rating, null);
+  assert.equal(blocked.factors.reviews.detail, 'No public reviews found');
+  assert.equal((await cache.get(refreshIpCacheKey(ip), NOW)).count, 10);
+
+  await analyzeJobPosting(job('other-ip'), layoffDeps({ cache, clientIp: '203.0.113.51', webSearch }));
+  assert.ok(reviewSearches > afterCap);
 });

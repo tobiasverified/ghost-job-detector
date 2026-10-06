@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { resolveWorkforce } from '../lib/server/analyze.js';
-import { boardNameVerdict, boardTokenVerdict, checkCompanyCareers, parseAtsBoard, parseWorkdayBoard, resolveOpenJobCount, workdaySiteMatchesCompany } from '../lib/server/open-jobs.js';
+import { boardNameVerdict, boardTokenVerdict, checkCompanyCareers, openJobsCacheKey, parseAtsBoard, parseWorkdayBoard, resolveOpenJobCount, workdaySiteMatchesCompany } from '../lib/server/open-jobs.js';
 
 const NOW = new Date('2026-10-01T12:00:00Z');
 const UMIAMI_URL = 'https://umiami.wd1.myworkdayjobs.com/en-US/UMCareerStaff/details/Desktop-Support-Technician_R100101533?jobFamilyGroup=12a3cb6c735c10343a4fee7b7cc4da55';
@@ -1323,4 +1323,44 @@ test('a guessed slug whose board name is a different company is rejected', async
   } finally {
     console.info = original;
   }
+});
+
+test('an open-roles miss is kept for 24 hours and skipped on refresh', async () => {
+  const cache = new MemoryCache();
+  const key = openJobsCacheKey('Acme');
+  const day = 24 * 60 * 60 * 1000;
+  let calls = 0;
+  const deps = () => ({
+    now: NOW,
+    cache,
+    fetch: async () => {
+      calls += 1;
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    },
+    webSearch: async () => {
+      calls += 1;
+      return [];
+    }
+  });
+
+  await cache.set(key, { miss: true, tier: 'search', higherTierFailed: false }, day, new Date(NOW.getTime() - (60 * 60 * 1000)));
+  const fresh = await resolveOpenJobCount('Acme', {}, deps());
+  assert.equal(fresh, null);
+  assert.equal(calls, 0);
+
+  cache.store.get(key).updatedAt = new Date(NOW.getTime() - (25 * 60 * 60 * 1000)).toISOString();
+  cache.store.get(key).expiresAt = new Date(NOW.getTime() + day).toISOString();
+  await resolveOpenJobCount('Acme', {}, deps());
+  assert.ok(calls > 0);
+
+  calls = 0;
+  await cache.set(key, { miss: true, tier: 'search', higherTierFailed: false }, day, NOW);
+  await resolveOpenJobCount('Acme', {}, { ...deps(), refresh: true });
+  assert.ok(calls > 0);
+
+  calls = 0;
+  await cache.set(key, { count: 12, source: 'greenhouse', estimated: false, lowerBound: false, scope: '', url: 'https://boards.greenhouse.io/acme' }, day, new Date(NOW.getTime() - (20 * 60 * 60 * 1000)));
+  const kept = await resolveOpenJobCount('Acme', {}, { ...deps(), refresh: true });
+  assert.equal(kept.count, 12);
+  assert.equal(calls, 0);
 });

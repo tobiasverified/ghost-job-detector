@@ -420,3 +420,40 @@ test('a company reviews page beats a jobs snippet from the other search', async 
   assert.equal(review.reviewCount, 683);
   assert.equal(review.url, 'https://www.indeed.com/cmp/Argonne-National-Laboratory/reviews');
 });
+
+test('Amazon Web Services accepts its Glassdoor reviews and overview pages', () => {
+  const reviewsPage = {
+    title: 'Amazon Web Services reviews',
+    url: 'https://www.glassdoor.com/Reviews/Amazon-Web-Services-Reviews-E7470741.htm',
+    snippet: '3.6 out of 5 stars, based on 14,645 reviews'
+  };
+  const overviewPage = {
+    title: 'Working at Amazon Web Services',
+    url: 'https://www.glassdoor.com/Overview/Working-at-Amazon-Web-Services-EI_IE7470741.11,30.htm',
+    snippet: 'Rated 3 out of 5 from 7,371 reviews'
+  };
+  const reviews = pickReview([reviewsPage], 'Amazon Web Services (AWS)');
+  const overview = pickReview([overviewPage], 'Amazon Web Services (AWS)');
+
+  assert.equal(reviews.rating, 3.6);
+  assert.equal(reviews.reviewCount, 14645);
+  assert.match(reviews.url, /E7470741/);
+  assert.equal(overview.rating, 3);
+  assert.equal(overview.reviewCount, 7371);
+  assert.match(overview.url, /EI_IE7470741/);
+});
+
+test('Amazon the retailer is rejected for Amazon Web Services', async () => {
+  const review = await findCompanyReviews('Amazon Web Services (AWS)', {
+    webSearch: async () => [{
+      title: 'Amazon reviews',
+      url: 'https://www.glassdoor.com/Reviews/Amazon-Reviews-E6036.htm',
+      snippet: 'Amazon Web Services rated 3.5 out of 5 from 254,198 reviews'
+    }]
+  });
+
+  assert.equal(review.rating, null);
+  assert.equal(review.unavailable, false);
+  assert.equal(review.hitsRejected, true);
+  assert.equal(review.detail, 'No public reviews found');
+});

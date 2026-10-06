@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
 import { resolveWorkforce } from '../lib/server/analyze.js';
-import { createCompanyRatingHandler, glassdoorEntityMatches, lookupCompanyRating, parseEmployeeSize } from '../lib/server/company-rating.js';
+import { createCompanyRatingHandler, glassdoorEntityMatches, lookupCompanyRating, parseEmployeeSize, ratingCacheKey } from '../lib/server/company-rating.js';
 import { scoreHiringRatio } from '../lib/server/workforce.js';
 import { MemoryRateLimiter } from '../lib/server/rateLimit.js';
 
@@ -873,6 +873,8 @@ test('a Glassdoor employer name must not add distinctive words to the company lo
   assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne National'), false);
   assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'UChicago Argonne, LLC'), false);
   assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'University of Chicago'), false);
+  assert.equal(glassdoorEntityMatches('Amazon Web Services (AWS)', 'Amazon Web Services'), true);
+  assert.equal(glassdoorEntityMatches('Amazon Web Services (AWS)', 'Amazon'), false);
 });
 
 test('a rejected Glassdoor entity is remembered, so the next lookup does not ask RapidAPI again', async () => {
@@ -1115,4 +1117,52 @@ test('a one-word alias is accepted when the website, slug, or Wikidata name agre
   assert.equal(bySlug.overall, 4.5);
   assert.equal(byWikidata.overall, 4.5);
   assert.equal(byWikidata.reviewCount, 43);
+});
+
+test('a Glassdoor name rejection lasts an hour and a rating is kept on refresh', async () => {
+  const now = new Date('2026-10-06T12:00:00Z');
+  const hour = 60 * 60 * 1000;
+  const cache = new MemoryCache();
+  const key = ratingCacheKey('Amazon Web Services (AWS)');
+  let calls = 0;
+  const input = (extra = {}) => ({
+    now,
+    cache,
+    env: { RAPIDAPI_KEY: 'rapid-test' },
+    fetch: async (url) => {
+      if (String(url).includes('rapidapi')) {
+        calls += 1;
+      }
+
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    },
+    ...extra
+  });
+
+  await cache.set(key, { entityMismatch: true, entity: 'Amazon' }, 24 * hour, new Date(now.getTime() - (30 * 60 * 1000)));
+  const fresh = await lookupCompanyRating('Amazon Web Services (AWS)', input());
+  assert.equal(fresh.error, 'not_found');
+  assert.equal(calls, 0);
+
+  calls = 0;
+  await lookupCompanyRating('Amazon Web Services (AWS)', input({ refresh: true }));
+  assert.ok(calls > 0);
+
+  calls = 0;
+  cache.store.get(key).updatedAt = new Date(now.getTime() - (2 * hour)).toISOString();
+  cache.store.get(key).expiresAt = new Date(now.getTime() + (20 * hour)).toISOString();
+  cache.store.get(key).payload = { entityMismatch: true, entity: 'Amazon' };
+  await lookupCompanyRating('Amazon Web Services (AWS)', input());
+  assert.ok(calls > 0);
+
+  calls = 0;
+  await cache.set(ratingCacheKey('Acme'), {
+    name: 'Acme',
+    ratings: { overall: 4.1 },
+    counts: { reviews: 80, open_jobs: 3 },
+    size: '1001 to 5000 Employees'
+  }, 24 * hour, new Date(now.getTime() - (20 * hour)));
+  const kept = await lookupCompanyRating('Acme', input({ refresh: true }));
+  assert.equal(kept.overall, 4.1);
+  assert.equal(calls, 0);
 });

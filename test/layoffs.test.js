@@ -877,3 +877,9 @@ test('a layoffs.fyi 404 is still remembered as a miss for a day', async () => {
   assert.deepEqual(marker.payload, { miss: true });
   assert.equal(marker.ttlMs, 24 * 60 * 60 * 1000);
 });
+
+test('a trailing parenthetical acronym is not a company alias', () => {
+  assert.equal(companyQueries('Amazon Web Services (AWS)').includes('aws'), false);
+  assert.equal(shorterCompanyNames('Amazon Web Services (AWS)').includes('aws'), false);
+  assert.deepEqual(companyQueries('Amazon Web Services (AWS)'), companyQueries('Amazon Web Services'));
+});
