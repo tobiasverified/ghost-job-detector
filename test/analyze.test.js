@@ -344,6 +344,7 @@ test('a Workday career-portal name is resolved before the company check', async 
     hostname: 'umiami.wd1.myworkdayjobs.com',
     platform: 'WORKDAY'
   }, layoffDeps({
+    ratioEnabled: true,
     lookupCompanyRating: async (company) => {
       lookedUp = company;
       return {
@@ -463,7 +464,7 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   });
 
   assert.equal(FACTOR_VERSIONS.reposts, 'v3');
-  assert.match(analysisCacheKey(job), /^analyze:v25:/);
+  assert.match(analysisCacheKey(job), /^analyze:v26:/);
   const first = await analyzeJobPosting(job, deps);
   assert.equal(first.cached, false);
   assert.equal(first.factorVersions.reposts, 'v3');

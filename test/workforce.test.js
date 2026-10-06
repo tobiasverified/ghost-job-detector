@@ -151,6 +151,7 @@ test('glassdoor details supply employees and open jobs from one lookup', async (
   }, {
     now: NOW,
     cache: new MemoryCache(),
+    ratioEnabled: true,
     searchNews: async () => [],
     fetchCache: async () => {
       throw new Error('offline');
@@ -297,10 +298,12 @@ test('glassdoor company details are reused for 24 hours', async () => {
   });
 
   assert.equal(calls, 2);
-  assert.equal(first.factors.hiringRatio.employees, 751);
+  assert.equal(first.factors.hiringRatio.label, '501 to 1,000 Employees');
+  assert.equal(first.factors.hiringRatio.score, 0);
+  assert.equal(first.factors.hiringRatio.openRoles, null);
   assert.equal(first.factors.reviews.rating, 4.2);
-  assert.equal(second.factors.hiringRatio.employees, 751);
-  assert.equal(expired.factors.hiringRatio.employees, 751);
+  assert.equal(second.factors.hiringRatio.label, '501 to 1,000 Employees');
+  assert.equal(expired.factors.hiringRatio.label, '501 to 1,000 Employees');
 });
 
 test('Petfolk 1.9 reaches calculateGhostScore as the hiring-ratio component', () => {
@@ -333,9 +336,10 @@ test('Petfolk 1.9 reaches calculateGhostScore as the hiring-ratio component', ()
   assert.equal(workforce.ratio, 1.9);
   assert.equal(workforce.label, '293 employees / 557 open roles = 1.9:1 ratio');
   assert.equal(workforce.score, 16);
-  assert.equal(score.components.hiringRatio, 16);
+  assert.equal(score.components.hiringRatio, 0);
+  assert.equal(score.score, 0);
   assert.equal(entry[1].ratio, 1.9);
   assert.equal(entry[1].workforceScore, 16);
-  assert.equal(entry[1].hiringRatioComponent, 16);
+  assert.equal(entry[1].hiringRatioComponent, 0);
   assert.equal(scoreHiringRatio({ employees: 293, openRoles: 557 }).score, 16);
 });
