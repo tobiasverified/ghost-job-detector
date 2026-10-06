@@ -264,25 +264,6 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
   });
   await flush();
 
-  assert.match(page.panel.innerHTML, /Finishing checks\.\.\./);
-  assert.match(page.panel.innerHTML, /4\.1 \/ 5 on Glassdoor/);
-  assert.match(page.panel.innerHTML, /Checking\.\.\./);
-  assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
-  assert.doesNotMatch(page.panel.innerHTML, /class="number"/);
-  assert.doesNotMatch(page.panel.innerHTML, /Some checks took too long/);
-
-  await wait(3200);
-  await flush();
-  const enrichments = page.sent.filter((message) => message.type === 'ENRICH_JOB');
-  assert.equal(enrichments.length, 2);
-  assert.equal(enrichments[1].body.refresh, undefined);
-  page.reply(2, withheldBody);
-  await flush();
-  page.reply(3, {
-    factors: { reposts: { score: 40, unavailable: false, available: true, matches: [] } }
-  });
-  await flush();
-
   const withheld = page.panel.innerHTML;
   assert.match(withheld, /Some checks took too long/);
   assert.match(withheld, /id="ghd-retry"/);
@@ -293,15 +274,16 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
   assert.doesNotMatch(withheld, /stroke-dasharray/);
   assert.doesNotMatch(withheld, /Not enough data to score/);
   assert.doesNotMatch(withheld, /Finishing checks/);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 1);
 
   page.click('ghd-retry');
   await flush();
   assert.match(page.panel.innerHTML, /4\.1 \/ 5 on Glassdoor/);
   assert.match(page.panel.innerHTML, /Still finishing/);
-  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 3);
-  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB')[2].body.refresh, true);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 2);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB')[1].body.refresh, true);
 
-  page.reply(4, {
+  page.reply(2, {
     ghostScore: 4,
     label: 'Ghost Job: Unlikely',
     factors: {
@@ -313,7 +295,7 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
     }
   });
   await flush();
-  page.reply(5, {
+  page.reply(3, {
     factors: { reposts: { unavailable: false, available: true, score: 0, detail: 'No other LinkedIn posting matched this role.' } }
   });
   await flush();
@@ -323,9 +305,9 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
   assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
 });
 
-test('a partial check shows the server score and retries once', async () => {
+test('a partial check shows the server score and unfinished rows, with no automatic retry', async () => {
   const page = loadWidget();
-  const detail = 'Still finishing. Try again in a few seconds.';
+  const detail = 'Still checking, try again in a few seconds';
   const partialBody = {
     ghostScore: 37,
     label: 'Ghost Job: Possible',
@@ -351,37 +333,34 @@ test('a partial check shows the server score and retries once', async () => {
 
   assert.match(page.panel.innerHTML, /class="number">37</);
   assert.doesNotMatch(page.panel.innerHTML, /class="number">45</);
-  assert.match(page.panel.innerHTML, /Finishing checks\.\.\./);
-  assert.match(page.panel.innerHTML, /Checking\.\.\./);
+  assert.match(page.panel.innerHTML, /Still checking, try again in a few seconds/);
+  assert.match(page.panel.innerHTML, /id="ghd-retry"/);
   assert.match(page.panel.innerHTML, /4\.1 \/ 5 on Glassdoor/);
-  assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
+  assert.doesNotMatch(page.panel.innerHTML, /Finishing checks/);
+  assert.doesNotMatch(page.panel.innerHTML, /Checking\.\.\./);
 
   await wait(3200);
   await flush();
   const enrichments = page.sent.filter((message) => message.type === 'ENRICH_JOB');
-  assert.equal(enrichments.length, 2);
+  assert.equal(enrichments.length, 1);
   assert.equal(enrichments[0].body.refresh, undefined);
-  assert.equal(enrichments[1].body.refresh, undefined);
+
+  page.click('ghd-retry');
+  await flush();
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 2);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB')[1].body.refresh, true);
   page.reply(2, partialBody);
   await flush();
   page.reply(3, {
     factors: { reposts: { unavailable: false, available: true, score: 0, detail: 'No other LinkedIn posting matched this role.' } }
   });
   await flush();
-
   assert.match(page.panel.innerHTML, /class="number">37</);
-  assert.match(page.panel.innerHTML, /id="ghd-retry"/);
-  assert.match(page.panel.innerHTML, new RegExp(detail.replace(/[.]/g, '\\.')));
-  assert.doesNotMatch(page.panel.innerHTML, /Finishing checks/);
-
-  await wait(3200);
-  await flush();
-  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 2);
+  assert.match(page.panel.innerHTML, /Still checking, try again in a few seconds/);
 });
 
-test('one automatic retry completes a partial check and does not loop', async () => {
+test('a partial check stays on its job and does not retry on its own', async () => {
   const page = loadWidget();
-  const detail = 'Still finishing. Try again in a few seconds.';
 
   await page.widget.analyze(jobA);
   page.click('ghd-full');
@@ -394,7 +373,7 @@ test('one automatic retry completes a partial check and does not loop', async ()
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { detected: false, unavailable: false, score: 0 },
       reviews: { rating: 4.1, platform: 'Glassdoor', score: 0, unavailable: false },
-      hiringRatio: { available: false, timedOut: true, score: 0, detail },
+      hiringRatio: { available: false, timedOut: true, score: 0, detail: 'Still finishing. Try again in a few seconds.' },
       reposts: { pending: true, score: 0, unavailable: true, available: false }
     }
   });
@@ -403,48 +382,24 @@ test('one automatic retry completes a partial check and does not loop', async ()
     factors: { reposts: { unavailable: false, available: true, score: 0, detail: 'No duplicate found' } }
   });
   await flush();
-  assert.match(page.panel.innerHTML, /Finishing checks\.\.\./);
+  assert.match(page.panel.innerHTML, /class="number">37</);
+  assert.match(page.panel.innerHTML, /Still checking, try again in a few seconds/);
 
   await page.widget.analyze(jobB);
   await flush();
-  assert.doesNotMatch(page.panel.innerHTML, /Finishing checks/);
   assert.doesNotMatch(page.panel.innerHTML, /class="number">37</);
+  assert.doesNotMatch(page.panel.innerHTML, /Still checking, try again in a few seconds/);
 
   await wait(3200);
   await flush();
-  const retry = page.sent.filter((message) => message.type === 'ENRICH_JOB');
-  assert.equal(retry.length, 2);
-  assert.equal(retry[1].body.refresh, undefined);
-  assert.equal(retry[1].body.company, 'Acme');
-  page.reply(2, {
-    ghostScore: 12,
-    label: 'Ghost Job: Unlikely',
-    factors: {
-      vagueness: { score: 0, label: 'Clear' },
-      layoffs: { detected: false, unavailable: false, score: 0 },
-      reviews: { rating: 4.1, platform: 'Glassdoor', score: 0, unavailable: false },
-      hiringRatio: { available: true, employees: 100, openRoles: 4, ratio: 0.04, score: 0, label: '100 employees · 4 open roles' },
-      reposts: { pending: true, score: 0, unavailable: true, available: false }
-    }
-  });
-  await flush();
-  page.reply(3, {
-    factors: { reposts: { unavailable: false, available: true, score: 0, detail: 'No duplicate found' } }
-  });
-  await flush();
-  assert.doesNotMatch(page.panel.innerHTML, /100 employees/);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 1);
 
   await page.widget.analyze(jobA);
   await flush();
-  assert.match(page.panel.innerHTML, /100 employees \/ 4 open roles/);
-  assert.doesNotMatch(page.panel.innerHTML, /Finishing checks/);
-  assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
-  assert.doesNotMatch(page.panel.innerHTML, /Checking\.\.\./);
-  assert.doesNotMatch(page.panel.innerHTML, /class="number">37</);
-
-  await wait(3200);
-  await flush();
-  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 2);
+  assert.match(page.panel.innerHTML, /class="number">37</);
+  assert.match(page.panel.innerHTML, /Still checking, try again in a few seconds/);
+  assert.match(page.panel.innerHTML, /id="ghd-retry"/);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 1);
 });
 
 test('a Workday check sends the resolved company name', async () => {
