@@ -197,28 +197,64 @@ test('a LinkedIn pay-range block counts as salary listed', () => {
 });
 
 test('existing salary formats still count', () => {
-  const formats = [
+  const inDescription = [
     '$160,000-$190,000',
-    '$160,000',
     '80k-100k',
     '80k to 100k',
     '$30.00/hr - $70.00/hr',
     '$30/hour',
     '$30 - $70 per hour',
     '$30.00/hr \u2013 $70.00/hr',
+    '$160,000 a year'
+  ];
+  const payBlockOnly = [
+    '$160,000',
     '£50,000',
     '€80k',
     'USD 120,000'
   ];
   const body = atLeast250Words('The team documents the workflow for each department.');
 
-  for (const format of formats) {
+  for (const format of inDescription) {
     const result = analyzeVagueness(`${body} ${format}`);
     const client = heuristics.analyzeVagueness(`${body} ${format}`);
     assert.equal(result.raw.hasSalary, true, format);
     assert.equal(result.factors.hasSalary.source, 'description', format);
     assert.equal(client.raw.hasSalary, true, format);
   }
+
+  for (const format of payBlockOnly) {
+    const inPosting = analyzeVagueness(`${body} ${format}`);
+    const inBlock = analyzeVagueness(body, 'Analyst', format);
+    assert.equal(inPosting.raw.hasSalary, false, format);
+    assert.equal(inBlock.raw.hasSalary, true, format);
+    assert.equal(inBlock.factors.hasSalary.source, 'pay-range', format);
+    assert.equal(heuristics.analyzeVagueness(`${body} ${format}`).raw.hasSalary, false, format);
+    assert.equal(heuristics.analyzeVagueness(body, 'Analyst', format).raw.hasSalary, true, format);
+  }
+});
+
+test('Baker Tilly revenue of $5.2 billion is not listed pay', () => {
+  const sentence = 'Baker Tilly is an accounting and advisory firm with $5.2 billion in revenue.';
+  const posting = atLeast250Words(sentence);
+  const scales = ['$5.2 billion', '$5.2B', '$5.2 M', '$2M', 'USD 5.2 million'];
+
+  for (const scale of scales) {
+    const result = analyzeVagueness(atLeast250Words(`The firm reported ${scale} in revenue.`));
+    const client = heuristics.analyzeVagueness(atLeast250Words(`The firm reported ${scale} in revenue.`));
+    assert.equal(result.raw.hasSalary, false, scale);
+    assert.equal(result.factors.hasSalary.score, 10, scale);
+    assert.equal(client.raw.hasSalary, false, scale);
+    assert.equal(client.factors.hasSalary.score, 10, scale);
+  }
+
+  const server = analyzeVagueness(posting);
+  const client = heuristics.analyzeVagueness(posting);
+  assert.equal(server.raw.hasSalary, false);
+  assert.equal(client.raw.hasSalary, false);
+  assert.equal(heuristics.salarySnippet(sentence, ''), '');
+  assert.equal(heuristics.salarySnippet(posting, '$5.2 billion'), '');
+  assert.equal(heuristics.salarySnippet('Revenue was $5.2 billion. The range is $130,000 to $160,000 a year.', ''), '$130,000 to $160,000 a year');
 });
 
 test('a long vague healthcare posting is still Very Vague', () => {

@@ -90,6 +90,20 @@ test('posted pay parses ranges, k, hourly, monthly, equity, and non-USD', () => 
   assert.equal(pounds.comparable, false);
   assert.equal(pounds.reason, 'currency');
   assert.equal(pounds.currency, 'GBP');
+
+  const revenue = 'Baker Tilly is an accounting and advisory firm with $5.2 billion in revenue.';
+
+  for (const sentence of [revenue, '$5.2 billion', '$5.2B', '$5.2 M', '$2M', 'USD 5.2 million']) {
+    const parsed = pay.parsePostedPay(sentence);
+    assert.equal(parsed.ok, false, sentence);
+    assert.equal(parsed.comparable, false, sentence);
+    assert.equal(parsed.reason, 'scale', sentence);
+  }
+
+  const mixed = pay.parsePostedPay('Revenue of $5.2 billion. The salary range is $130,000 to $160,000 a year.');
+  assert.equal(mixed.comparable, true);
+  assert.equal(mixed.annualMin, 130000);
+  assert.equal(mixed.annualMax, 160000);
 });
 
 test('the market fixture compares base pay, and a weak title or thin sample does not', () => {
