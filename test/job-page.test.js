@@ -449,6 +449,104 @@ test('a funder named beside a bare site word does not become the company', async
   assert.deepEqual(searches, ['UChicago Argonne, LLC']);
 });
 
+function amliPosting(includeResidential) {
+  const opening = 'The coordinator reviews lease files, vendor invoices, and partner notices. ';
+  const middle = 'Daily work covers resident ledgers and the month-end close for each community. '.repeat(12);
+  const closing = includeResidential
+    ? 'AMLI Residential supports the legal and risk team.'
+    : 'The legal and risk team supports each community.';
+  return `${opening}${middle}${closing}`;
+}
+
+test('a one-word site name prefers AMLI Residential from the full description', async () => {
+  const pages = loadPageHelper();
+  const description = amliPosting(true);
+  const head = description.replace(/\s+/g, ' ').trim().slice(0, 800);
+  const searches = [];
+  const company = await pages.resolveCompanyIdentity({
+    jobTitle: 'Transactions & Risk Coordinator',
+    description,
+    organization: '00205 AMLI Management Company',
+    siteId: 'AMLI_Careers',
+    hostname: 'amli.wd5.myworkdayjobs.com',
+    pathname: '/en-US/AMLI_Careers/details/Transactions---Risk-Coordinator_R-101072'
+  }, {
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'AMLI Residential') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q1', label: 'AMLI Residential' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q1') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q1: {
+                  labels: { en: { value: 'AMLI Residential' } },
+                  aliases: { en: [{ value: 'AMLI' }] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      throw new Error(`unexpected Wikidata request ${search || ids || url}`);
+    }
+  });
+
+  assert.equal(head.includes('AMLI Residential'), false);
+  assert.equal(company, 'AMLI Residential');
+  assert.equal(company === 'AMLI' || company === 'AMLI Management Company', false);
+  assert.deepEqual(searches, ['AMLI Residential']);
+});
+
+test('a bare AMLI name stays AMLI when the description has no business-word phrase', async () => {
+  const pages = loadPageHelper();
+  const searches = [];
+  const company = await pages.resolveCompanyIdentity({
+    jobTitle: 'Transactions & Risk Coordinator',
+    description: amliPosting(false),
+    organization: '00205 AMLI Management Company',
+    siteId: 'AMLI_Careers',
+    hostname: 'amli.wd5.myworkdayjobs.com'
+  }, {
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      return {
+        ok: true,
+        async json() {
+          return { search: [] };
+        }
+      };
+    }
+  });
+
+  assert.equal(company, 'AMLI');
+  assert.equal(searches.includes('AMLI Residential'), false);
+  assert.deepEqual(searches, ['AMLI Management Company']);
+});
+
 test('a stub description retries identity resolution until the organization phrase is present', async () => {
   const pages = loadPageHelper();
   const real = `${'The University of Miami Health System ("UHealth") provides patient care across Miami-Dade. '}${'Clinical systems support for Epic analysts. '.repeat(6)}`;

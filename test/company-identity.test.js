@@ -384,3 +384,108 @@ test('Department of Energy and University of Chicago do not replace a bare name'
   assert.deepEqual(searches, ['UChicago Argonne, LLC']);
   assert.equal(groqCalls, 0);
 });
+
+function amliPosting(includeResidential) {
+  const opening = 'The coordinator reviews lease files, vendor invoices, and partner notices. ';
+  const middle = 'Daily work covers resident ledgers and the month-end close for each community. '.repeat(12);
+  const closing = includeResidential
+    ? 'AMLI Residential supports the legal and risk team.'
+    : 'The legal and risk team supports each community.';
+  return `${opening}${middle}${closing}`;
+}
+
+test('a one-word company name prefers AMLI Residential from the full description', async () => {
+  const description = amliPosting(true);
+  const searches = [];
+  let groqCalls = 0;
+  const company = await resolveCompanyIdentity({
+    rawName: 'AMLI',
+    description,
+    organization: '00205 AMLI Management Company',
+    hostname: 'amli.wd5.myworkdayjobs.com',
+    platform: 'WORKDAY'
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    askGroq: async () => {
+      groqCalls += 1;
+      return 'AMLI Management Company';
+    },
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+      const ids = params.get('ids');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      if (search === 'AMLI Residential') {
+        return {
+          ok: true,
+          async json() {
+            return { search: [{ id: 'Q1', label: 'AMLI Residential' }] };
+          }
+        };
+      }
+
+      if (ids === 'Q1') {
+        return {
+          ok: true,
+          async json() {
+            return {
+              entities: {
+                Q1: {
+                  labels: { en: { value: 'AMLI Residential' } },
+                  aliases: { en: [{ value: 'AMLI' }] }
+                }
+              }
+            };
+          }
+        };
+      }
+
+      return { ok: true, async json() { return { search: [] }; } };
+    }
+  });
+
+  assert.equal(description.replace(/\s+/g, ' ').trim().slice(0, 800).includes('AMLI Residential'), false);
+  assert.equal(company, 'AMLI Residential');
+  assert.equal(company === 'AMLI' || company === 'AMLI Management Company', false);
+  assert.deepEqual(searches, ['AMLI Residential']);
+  assert.equal(groqCalls, 0);
+});
+
+test('AMLI stays AMLI when the description has no business-word phrase', async () => {
+  const searches = [];
+  let groqCalls = 0;
+  const company = await resolveCompanyIdentity({
+    rawName: 'AMLI',
+    description: amliPosting(false),
+    organization: '00205 AMLI Management Company',
+    hostname: 'amli.wd5.myworkdayjobs.com',
+    platform: 'WORKDAY'
+  }, {
+    now: NOW,
+    cache: new MemoryCache(),
+    askGroq: async () => {
+      groqCalls += 1;
+      return 'AMLI Residential';
+    },
+    fetch: async (url) => {
+      const params = new URL(String(url)).searchParams;
+      const search = params.get('search');
+
+      if (search) {
+        searches.push(search);
+      }
+
+      return { ok: true, async json() { return { search: [] }; } };
+    }
+  });
+
+  assert.equal(company, 'AMLI');
+  assert.equal(searches.includes('AMLI Residential'), false);
+  assert.deepEqual(searches, ['AMLI Management Company']);
+  assert.equal(groqCalls, 0);
+});
