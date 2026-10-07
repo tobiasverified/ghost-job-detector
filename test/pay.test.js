@@ -26,7 +26,7 @@ function loadPay() {
 const pay = loadPay();
 
 test('a second injection of pay.js keeps the first copy', () => {
-  const sandbox = { console, module: { exports: {} } };
+  const sandbox = { console, module: { exports: {} }, chrome: { runtime: { id: 'ghost-job-detector' } } };
   sandbox.exports = sandbox.module.exports;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

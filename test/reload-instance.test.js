@@ -8,6 +8,8 @@ const widgetSource = readFileSync(new URL('../lib/widget.js', import.meta.url), 
 const contentSource = readFileSync(new URL('../content.js', import.meta.url), 'utf8');
 const jobPageSource = readFileSync(new URL('../lib/job-page.js', import.meta.url), 'utf8');
 const heuristicsSource = readFileSync(new URL('../lib/heuristics.js', import.meta.url), 'utf8');
+const paySource = readFileSync(new URL('../lib/pay.js', import.meta.url), 'utf8');
+const headcountSource = readFileSync(new URL('../lib/company-headcount.js', import.meta.url), 'utf8');
 
 function collectText(node) {
   const kids = (node.children || []).map((child) => collectText(child)).join(' ');
@@ -462,4 +464,48 @@ test('an orphaned teardown leaves the new widget and badges in place', async () 
   assert.equal(hosts.length, 1);
   assert.equal(hosts[0], newHost);
   assert.equal(newPage.sandbox.GhdWidget, widget);
+});
+
+test('dead flags left in the page do not stop the new widget', async () => {
+  const saved = [];
+  const page = installPage(saved);
+
+  function dead() {
+    throw new Error('Extension context invalidated');
+  }
+
+  page.sandbox.__GHD_HEADCOUNT__ = true;
+  page.sandbox.__GHD_HEADCOUNT_LIVE__ = dead;
+  page.sandbox.__GHD_PAGE__ = true;
+  page.sandbox.__GHD_PAGE_LIVE__ = dead;
+  page.sandbox.__GHD_HEURISTICS__ = true;
+  page.sandbox.__GHD_HEURISTICS_LIVE__ = dead;
+  page.sandbox.__GHD_PAY__ = true;
+  page.sandbox.__GHD_PAY_LIVE__ = dead;
+  page.sandbox.__GHD_LINKEDIN__ = true;
+  page.sandbox.__GHD_CONTENT_LIVE__ = dead;
+  page.sandbox.__GHD_WIDGET_LIVE__ = dead;
+  page.sandbox.__GHD_COPY_LIVE__ = dead;
+  page.sandbox.GhdHeadcount = { stale: true };
+  page.sandbox.GhdPage = { stale: true };
+  page.sandbox.GhostJobHeuristics = { stale: true };
+  page.sandbox.GhdPay = { stale: true };
+  page.sandbox.GhdWidget = { analyze() {}, stale: true };
+
+  vm.runInContext(headcountSource, page.sandbox);
+  vm.runInContext(jobPageSource, page.sandbox);
+  vm.runInContext(heuristicsSource, page.sandbox);
+  vm.runInContext(paySource, page.sandbox);
+  vm.runInContext(widgetSource, page.sandbox);
+  vm.runInContext(contentSource, page.sandbox);
+  await wait(400);
+
+  assert.notEqual(page.sandbox.GhdPage.stale, true);
+  assert.notEqual(page.sandbox.GhostJobHeuristics.stale, true);
+  assert.notEqual(page.sandbox.GhdWidget.stale, true);
+  const host = page.document.getElementById('ghd-widget-host');
+  assert.equal(host?.getAttribute('data-ghd-instance'), page.sandbox.__GHD_INSTANCE__);
+  assert.equal(host.isConnected, true);
+  assert.ok(saved.some((items) => items.ghd_current_job?.title === 'Beauty Advisor' && items.ghd_current_job?.company === 'Ulta Beauty'));
+  assert.match(host.shadowRoot.querySelector('div').innerHTML, /Ghost Job Detector|Analyzing this job|Not yet checked/);
 });

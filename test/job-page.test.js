@@ -912,7 +912,7 @@ test('a second widget injection keeps the open panel instead of stacking another
 
 test('heuristics.js can be injected twice without redeclaring its constants', () => {
   const source = readFileSync(new URL('../lib/heuristics.js', import.meta.url), 'utf8');
-  const sandbox = { console, globalThis: {} };
+  const sandbox = { console, globalThis: {}, chrome: { runtime: { id: 'ghost-job-detector' } } };
   sandbox.globalThis = sandbox;
   sandbox.module = { exports: {} };
   sandbox.exports = sandbox.module.exports;

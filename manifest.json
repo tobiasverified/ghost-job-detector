@@ -12,6 +12,7 @@
   ],
   "host_permissions": [
     "*://*.linkedin.com/*",
+    "*://linkedin.com/*",
     "*://*.myworkdayjobs.com/*",
     "https://*.vercel.app/*",
     "https://html.duckduckgo.com/*",

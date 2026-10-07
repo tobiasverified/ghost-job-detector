@@ -42,6 +42,64 @@ function filesForUrl(rawUrl) {
   return null;
 }
 
+const INJECT_DEBUG_KEY = 'ghd_inject_debug';
+const INJECT_DEBUG_LIMIT = 20;
+// Content scripts run in the isolated world. The probe has to use that same
+// world: the page's main world shares the DOM but not __GHD_COPY_LIVE__.
+const SCRIPT_WORLD = 'ISOLATED';
+
+function tabLocation(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return { host: url.host, path: url.pathname };
+  } catch {
+    return { host: '', path: '' };
+  }
+}
+
+function errorText(error) {
+  return String(error?.message || error || 'unknown error');
+}
+
+async function recordInjectDebug(entry) {
+  let current = [];
+
+  try {
+    const stored = await chrome.storage.local.get(INJECT_DEBUG_KEY);
+    current = Array.isArray(stored?.[INJECT_DEBUG_KEY]) ? stored[INJECT_DEBUG_KEY] : [];
+  } catch {
+    current = [];
+  }
+
+  const next = [entry, ...current].slice(0, INJECT_DEBUG_LIMIT);
+
+  try {
+    await chrome.storage.local.set({ [INJECT_DEBUG_KEY]: next });
+  } catch {
+    // The record is diagnostic only.
+  }
+
+  return entry;
+}
+
+async function targetedFrames(tabId) {
+  const frameIds = [0];
+
+  try {
+    if (typeof chrome.webNavigation?.getAllFrames !== 'function') {
+      return { frameIds, pageFrameIds: frameIds, frameError: '' };
+    }
+
+    const frames = await chrome.webNavigation.getAllFrames({ tabId });
+    const pageFrameIds = (frames || [])
+      .map((frame) => frame.frameId)
+      .filter((id) => Number.isInteger(id));
+    return { frameIds, pageFrameIds, frameError: '' };
+  } catch (error) {
+    return { frameIds, pageFrameIds: [], frameError: errorText(error) };
+  }
+}
+
 function inject(tabId, rawUrl) {
   const files = filesForUrl(rawUrl);
 
@@ -50,7 +108,8 @@ function inject(tabId, rawUrl) {
   }
 
   chrome.scripting.executeScript({
-    target: { tabId },
+    target: { tabId, frameIds: [0] },
+    world: SCRIPT_WORLD,
     files
   }).catch(() => {
     // The page can reject injection during discard or navigation.
@@ -74,86 +133,166 @@ const OPEN_TAB_URLS = [
 // copy's instance. Leftover DOM from an orphaned copy is not enough.
 function extensionCopyIsHealthy() {
   try {
-    if (!chrome.runtime?.id) {
-      return false;
+    let runtimeId = '';
+
+    try {
+      runtimeId = chrome.runtime?.id || '';
+    } catch (error) {
+      return { healthy: false, reason: `runtime-threw: ${errorText(error)}` };
+    }
+
+    if (!runtimeId) {
+      return { healthy: false, reason: 'no-runtime' };
     }
 
     let copyLive = false;
 
     try {
       copyLive = typeof globalThis.__GHD_COPY_LIVE__ === 'function' && globalThis.__GHD_COPY_LIVE__() === true;
-    } catch {
-      copyLive = false;
+    } catch (error) {
+      return { healthy: false, reason: `live-check-threw: ${errorText(error)}` };
     }
 
     if (!copyLive) {
-      return false;
+      return { healthy: false, reason: 'no-live-copy' };
     }
 
     if (globalThis.__GHD_LINKEDIN_COMPANY__ === true) {
-      return true;
+      return { healthy: true, reason: 'company-live' };
     }
 
-    const instance = globalThis.__GHD_INSTANCE__;
+    const instance = globalThis.__GHD_INSTANCE__ || '';
     const host = document.getElementById('ghd-widget-host');
-    return Boolean(instance) && host?.getAttribute?.('data-ghd-instance') === instance;
-  } catch {
-    return false;
+    const stamped = host?.getAttribute?.('data-ghd-instance') || '';
+
+    if (!instance) {
+      return { healthy: false, reason: 'no-instance' };
+    }
+
+    if (!host) {
+      return { healthy: false, reason: 'host-missing' };
+    }
+
+    if (stamped !== instance) {
+      return { healthy: false, reason: 'host-instance-mismatch' };
+    }
+
+    return { healthy: true, reason: 'host-instance-match' };
+  } catch (error) {
+    return { healthy: false, reason: `probe-threw: ${errorText(error)}` };
   }
 }
 
 async function injectOpenTab(tab) {
   const files = filesForUrl(tab?.url);
+  const location = tabLocation(tab?.url);
+  const frames = await targetedFrames(tab?.id);
+  const record = {
+    id: tab?.id ?? null,
+    host: location.host,
+    path: location.path,
+    healthy: false,
+    healthyReason: '',
+    executeScript: false,
+    files: null,
+    result: '',
+    frameIds: frames.frameIds,
+    pageFrameIds: frames.pageFrameIds,
+    world: SCRIPT_WORLD
+  };
+
+  if (frames.frameError) {
+    record.frameError = frames.frameError;
+  }
 
   if (!files || !tab?.id) {
-    return;
+    record.healthyReason = 'no-match';
+    record.result = 'not-injected';
+    return record;
   }
 
   try {
     const probed = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tab.id, frameIds: frames.frameIds },
+      world: SCRIPT_WORLD,
       func: extensionCopyIsHealthy
     });
+    const verdict = probed?.[0]?.result;
 
-    if (probed?.[0]?.result === true) {
-      return;
+    if (verdict && typeof verdict === 'object') {
+      record.healthy = verdict.healthy === true;
+      record.healthyReason = String(verdict.reason || '');
+    } else {
+      record.healthy = false;
+      record.healthyReason = 'probe-empty';
     }
-  } catch {
-    return;
+  } catch (error) {
+    record.healthy = false;
+    record.healthyReason = `probe-error: ${errorText(error)}`;
   }
+
+  if (record.healthy) {
+    record.result = 'skipped';
+    return record;
+  }
+
+  record.executeScript = true;
+  record.files = files;
 
   try {
     await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId: tab.id, frameIds: frames.frameIds },
+      world: SCRIPT_WORLD,
       files
     });
-  } catch {
-    // The page can reject injection during discard or navigation.
+    record.result = 'ok';
+  } catch (error) {
+    record.result = errorText(error);
   }
+
+  return record;
 }
 
-async function injectMatchingTabs() {
+async function injectMatchingTabs(reason) {
+  const entry = {
+    time: new Date().toISOString(),
+    event: reason || 'startup',
+    tabs: []
+  };
+
   let tabs = [];
 
   try {
     tabs = await chrome.tabs.query({ url: OPEN_TAB_URLS });
-  } catch {
-    return;
+  } catch (error) {
+    entry.result = errorText(error);
+    await recordInjectDebug(entry);
+    return entry;
   }
 
-  await Promise.all((tabs || []).map((tab) => injectOpenTab(tab)));
+  entry.tabs = await Promise.all((tabs || []).map((tab) => injectOpenTab(tab)));
+  await recordInjectDebug(entry);
+  return entry;
 }
 
 let openTabsInjection = null;
 
-function injectOpenTabs() {
+function injectOpenTabs(reason) {
+  const event = reason || 'startup';
+
   if (!openTabsInjection) {
-    openTabsInjection = injectMatchingTabs().finally(() => {
+    openTabsInjection = injectMatchingTabs(event).finally(() => {
       openTabsInjection = null;
     });
+    return openTabsInjection;
   }
 
-  return openTabsInjection;
+  return openTabsInjection.then((report) => recordInjectDebug({
+    time: new Date().toISOString(),
+    event,
+    tabs: report?.tabs || [],
+    note: 'joined an injection already running'
+  }));
 }
 
 function allowedFetchUrl(rawUrl) {
@@ -780,9 +919,18 @@ chrome.runtime.onSuspend.addListener(() => {
 });
 
 chrome.runtime.onInstalled.addListener((details) => {
-  if (details?.reason === 'install' || details?.reason === 'update') {
-    injectOpenTabs();
+  const reason = details?.reason || 'installed';
+
+  if (reason === 'install' || reason === 'update') {
+    return injectOpenTabs(reason);
   }
+
+  return recordInjectDebug({
+    time: new Date().toISOString(),
+    event: reason,
+    tabs: [],
+    note: 'onInstalled did not re-inject open tabs'
+  });
 });
 
-injectOpenTabs();
+injectOpenTabs('startup');
