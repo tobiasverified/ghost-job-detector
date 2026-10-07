@@ -57,6 +57,90 @@ function inject(tabId, rawUrl) {
   });
 }
 
+// Same match patterns as manifest.content_scripts. chrome.tabs.query uses them
+// to find tabs that were already open when this worker started.
+const OPEN_TAB_URLS = [
+  '*://*.linkedin.com/jobs/*',
+  '*://*.linkedin.com/jobs/search*',
+  '*://*.linkedin.com/jobs/search?*',
+  '*://linkedin.com/jobs/*',
+  '*://*.myworkdayjobs.com/*',
+  '*://*.linkedin.com/company/*',
+  '*://linkedin.com/company/*'
+];
+
+// Runs in the tab. A reload leaves the old copy with no runtime id, so that
+// tab is injected again. A live copy already has the widget or the company script.
+function extensionCopyIsHealthy() {
+  try {
+    if (!chrome.runtime?.id) {
+      return false;
+    }
+
+    if (typeof globalThis.GhdWidget?.analyze === 'function') {
+      return true;
+    }
+
+    return globalThis.__GHD_LINKEDIN_COMPANY__ === true;
+  } catch {
+    return false;
+  }
+}
+
+async function injectOpenTab(tab) {
+  const files = filesForUrl(tab?.url);
+
+  if (!files || !tab?.id) {
+    return;
+  }
+
+  try {
+    const probed = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: extensionCopyIsHealthy
+    });
+
+    if (probed?.[0]?.result === true) {
+      return;
+    }
+  } catch {
+    return;
+  }
+
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files
+    });
+  } catch {
+    // The page can reject injection during discard or navigation.
+  }
+}
+
+async function injectMatchingTabs() {
+  let tabs = [];
+
+  try {
+    tabs = await chrome.tabs.query({ url: OPEN_TAB_URLS });
+  } catch {
+    return;
+  }
+
+  await Promise.all((tabs || []).map((tab) => injectOpenTab(tab)));
+}
+
+let openTabsInjection = null;
+
+function injectOpenTabs() {
+  if (!openTabsInjection) {
+    openTabsInjection = injectMatchingTabs().finally(() => {
+      openTabsInjection = null;
+    });
+  }
+
+  return openTabsInjection;
+}
+
 function allowedFetchUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -679,3 +763,11 @@ chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
 chrome.runtime.onSuspend.addListener(() => {
   currentJob = null;
 });
+
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details?.reason === 'install' || details?.reason === 'update') {
+    injectOpenTabs();
+  }
+});
+
+injectOpenTabs();
