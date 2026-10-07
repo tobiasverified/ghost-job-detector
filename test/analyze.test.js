@@ -154,10 +154,7 @@ test('successful analyses are cached for the next request', async () => {
     company: 'Amazon',
     description: 'Design services.',
     url: 'https://example.com/amazon-job',
-    platform: 'LINKEDIN',
-    clientHtml: {
-      reposts: '<div class="result__body"><a class="result__a" href="https://example.com/other">Unrelated</a><a class="result__snippet" href="https://example.com">Nothing here.</a></div>'
-    }
+    platform: 'LINKEDIN'
   };
 
   const first = await analyzeJobPosting(job, deps);
@@ -225,7 +222,7 @@ test('rate limiting returns 429 after the hourly cap', async () => {
   assert.equal(JSON.stringify(second.body).includes(SECRET), false);
 });
 
-test('the handler reads clientHtml search pages from the request', async () => {
+test('the handler ignores review HTML sent in the request', async () => {
   const handler = createAnalyzeHandler({
     now: NOW,
     cache: new MemoryCache(),
@@ -252,10 +249,11 @@ test('the handler reads clientHtml search pages from the request', async () => {
     }
   }), res);
 
+  // Anyone can send that HTML. A rating read from it would be cached for
+  // every user, so the server looks the reviews up itself instead.
   assert.equal(res.statusCode, 200);
-  assert.equal(res.body.factors.reviews.rating, 3.6);
-  assert.equal(res.body.factors.reviews.reviewCount, 778);
-  assert.equal(res.body.factors.reviews.score, 4);
+  assert.notEqual(res.body.factors.reviews.rating, 3.6);
+  assert.notEqual(res.body.factors.reviews.reviewCount, 778);
 });
 
 test('a RapidAPI rating is the Glassdoor review and skips search', async () => {
@@ -441,6 +439,11 @@ test('a deferred full check leaves repost search to the follow-up request', asyn
 test('an analysis cache hit still rechecks reposts when the factor version matches', async () => {
   const cache = new MemoryCache();
   let repostReads = 0;
+  const match = {
+    url: 'https://www.linkedin.com/jobs/view/senior-data-science-engineer-at-t-mobile-4460918631',
+    title: 'T-Mobile hiring Senior Data Science Engineer in New York, NY | LinkedIn',
+    snippet: 'T-Mobile Advertising Solutions in New York, NY.'
+  };
   const html = '<div class="result__body"><a class="result__a" href="https://www.linkedin.com/jobs/view/senior-data-science-engineer-at-t-mobile-4460918631">T-Mobile hiring Senior Data Science Engineer in New York, NY | LinkedIn</a><a class="result__snippet" href="https://example.com">T-Mobile Advertising Solutions in New York, NY.</a></div>';
   const job = {
     title: 'Senior Data Science Engineer',
@@ -449,14 +452,14 @@ test('an analysis cache hit still rechecks reposts when the factor version match
     url: 'https://www.linkedin.com/jobs/view/senior-data-science-engineer-at-t-mobile-4474577888',
     platform: 'LINKEDIN',
     location: 'New York, NY',
-    locationNormalized: 'New York, New York',
-    clientHtml: { reposts: html }
+    locationNormalized: 'New York, New York'
   };
   const deps = layoffDeps({
     cache,
     webSearch: async (query) => {
       if (String(query).includes('Senior Data Science Engineer')) {
         repostReads += 1;
+        return [match];
       }
 
       return [];
@@ -464,32 +467,37 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   });
 
   assert.equal(FACTOR_VERSIONS.reposts, 'v3');
-  assert.match(analysisCacheKey(job), /^analyze:v27:/);
+  assert.match(analysisCacheKey(job), /^analyze:v28:/);
+  // The server's own repost search: its result is shared and cached.
   const first = await analyzeJobPosting(job, deps);
   assert.equal(first.cached, false);
   assert.equal(first.factorVersions.reposts, 'v3');
   assert.equal(first.factors.reposts.count, 1);
+  assert.equal(repostReads, 1);
 
   const stored = await cache.get(analysisCacheKey(job), NOW);
   stored.factorVersions.reposts = 'v3';
   stored.factors.reposts = { ...stored.factors.reposts, count: 0, score: 0, matches: [] };
 
+  // The analysis is a cache hit, and reposts are read again from their own
+  // cache entry, not from the stale copy on the analysis.
+  const refreshed = await analyzeJobPosting(job, deps);
+  assert.equal(refreshed.cached, true);
+  assert.equal(refreshed.factors.reposts.count, 1);
+  assert.equal(refreshed.factors.reposts.matches[0].url.includes('4460918631'), true);
+  assert.equal(repostReads, 1);
+  assert.equal(stored.factors.layoffs, refreshed.factors.layoffs);
+
+  // Client HTML still answers the requester, without a search.
   for (const key of [...cache.store.keys()]) {
     if (String(key).startsWith('linkedin_repost_')) {
       cache.store.delete(key);
     }
   }
 
-  const refreshed = await analyzeJobPosting(job, deps);
-  const fromSearchCache = await analyzeJobPosting({ ...job, clientHtml: {} }, deps);
-
-  assert.equal(refreshed.cached, true);
-  assert.equal(refreshed.factors.reposts.count, 1);
-  assert.equal(refreshed.factors.reposts.matches[0].url.includes('4460918631'), true);
-  assert.equal(fromSearchCache.cached, true);
-  assert.equal(fromSearchCache.factors.reposts.count, 1);
-  assert.equal(repostReads, 0);
-  assert.equal(stored.factors.layoffs, refreshed.factors.layoffs);
+  const fromClient = await analyzeJobPosting({ ...job, clientHtml: { reposts: html } }, deps);
+  assert.equal(fromClient.factors.reposts.count, 1);
+  assert.equal(repostReads, 1);
 });
 
 test('a glassdoor profile keeps its review count and drops a missing one', async () => {
@@ -822,4 +830,29 @@ test('an IP can refresh ten times an hour and the next request is a normal check
 
   await analyzeJobPosting(job('other-ip'), layoffDeps({ cache, clientIp: '203.0.113.51', webSearch }));
   assert.ok(reviewSearches > afterCap);
+});
+
+test('an analysis that includes reposts parsed from client HTML is not written to the shared cache', async () => {
+  const cache = new MemoryCache();
+  const html = '<div class="result__body"><a class="result__a" href="https://www.linkedin.com/jobs/view/senior-data-science-engineer-at-t-mobile-4460918631">T-Mobile hiring Senior Data Science Engineer in New York, NY | LinkedIn</a><a class="result__snippet" href="https://example.com">T-Mobile Advertising Solutions in New York, NY.</a></div>';
+  const job = {
+    title: 'Senior Data Science Engineer',
+    company: 'T-Mobile',
+    description: 'Build Python and AWS services.',
+    url: 'https://www.linkedin.com/jobs/view/senior-data-science-engineer-at-t-mobile-4474577888',
+    platform: 'LINKEDIN',
+    location: 'New York, NY',
+    locationNormalized: 'New York, New York'
+  };
+  const deps = layoffDeps({ cache, webSearch: async () => [] });
+
+  const fromClient = await analyzeJobPosting({ ...job, clientHtml: { reposts: html } }, deps);
+  assert.equal(fromClient.factors.reposts.count, 1);
+  assert.equal(await cache.get(analysisCacheKey(job), NOW), null);
+
+  // With reposts deferred to their own request, the analysis has no
+  // client-built part and is cached as before.
+  const deferred = await analyzeJobPosting({ ...job, deferReposts: true, clientHtml: { reposts: html } }, deps);
+  assert.equal(deferred.cached, false);
+  assert.notEqual(await cache.get(analysisCacheKey(job), NOW), null);
 });

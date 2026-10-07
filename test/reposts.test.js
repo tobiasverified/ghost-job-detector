@@ -48,7 +48,7 @@ test('a company prefix on the city is not repeated in the repost query', () => {
   assert.equal(repostQuery(job), 'Senior Data Science Engineer T-Mobile New York, New York');
   assert.equal(
     repostCacheKey(job),
-    'linkedin_repost_v3_t-mobile_senior-data-science-engineer_new-york-new-york'
+    'linkedin_repost_v4_t-mobile_senior-data-science-engineer_new-york-new-york'
   );
 });
 
@@ -415,7 +415,7 @@ test('repost results cache for 24 hours under the linkedin key', async () => {
   await detectReposts(JOB, deps);
 
   assert.equal(calls, 1);
-  assert.equal(repostCacheKey(JOB), 'linkedin_repost_v3_axon_software-engineer_seattle-washington');
+  assert.equal(repostCacheKey(JOB), 'linkedin_repost_v4_axon_software-engineer_seattle-washington');
 });
 
 test('a stored confirmed duplicate is rescored at the current weight', async () => {
