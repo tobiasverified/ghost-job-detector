@@ -68,7 +68,7 @@ test('the on-page open-roles fields are part of the analysis cache key', () => {
   const forged = analysisCacheKey({ ...base, openJobsCount: 90000, openJobsPageUrl: 'https://www.linkedin.com/jobs/t-mobile-jobs', openJobsCompanyId: '123' });
   const allMatch = analysisCacheKey({ ...base, openJobsCount: 40, openJobsPageUrl: 'https://www.linkedin.com/jobs/t-mobile-jobs', openJobsCompanyId: '123', openJobsAllMatch: true });
 
-  assert.match(plain, /^analyze:v28:.*:oj0$/);
+  assert.match(plain, /^analyze:v29:.*:oj0$/);
   assert.notEqual(counted, plain);
   assert.notEqual(forged, counted);
   assert.notEqual(allMatch, counted);
@@ -76,7 +76,7 @@ test('the on-page open-roles fields are part of the analysis cache key', () => {
 });
 
 test('keys that could hold results built from client HTML are bumped', () => {
-  assert.match(repostCacheKey(JOB), /^linkedin_repost_v4_/);
+  assert.match(repostCacheKey(JOB), /^linkedin_repost_v5_/);
   assert.match(reviewCacheKey('Axon'), /^reviews:v12:/);
   assert.match(workforceCacheKey('Axon'), /^workforce:v2:/);
 });

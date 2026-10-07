@@ -467,7 +467,7 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   });
 
   assert.equal(FACTOR_VERSIONS.reposts, 'v3');
-  assert.match(analysisCacheKey(job), /^analyze:v28:/);
+  assert.match(analysisCacheKey(job), /^analyze:v29:/);
   // The server's own repost search: its result is shared and cached.
   const first = await analyzeJobPosting(job, deps);
   assert.equal(first.cached, false);

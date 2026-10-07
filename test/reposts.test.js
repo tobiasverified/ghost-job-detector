@@ -13,6 +13,8 @@ import {
   normalizeLocation,
   parsePostedAgeDays,
   REPOST_SCORE,
+  SIMILAR_REPOST_SCORE,
+  scoreRepostMatches,
   repostCacheKey,
   repostQuery,
   titlesMatch
@@ -48,7 +50,7 @@ test('a company prefix on the city is not repeated in the repost query', () => {
   assert.equal(repostQuery(job), 'Senior Data Science Engineer T-Mobile New York, New York');
   assert.equal(
     repostCacheKey(job),
-    'linkedin_repost_v4_t-mobile_senior-data-science-engineer_new-york-new-york'
+    'linkedin_repost_v5_t-mobile_senior-data-science-engineer_new-york-new-york'
   );
 });
 
@@ -177,6 +179,123 @@ test('a Workday job counts a LinkedIn repost only when two listings match', () =
   assert.equal(two.score, REPOST_SCORE);
   assert.equal(two.count, 2);
   assert.equal(two.matches.length, 2);
+});
+
+function linkedInJob(title, company, city, id) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const companySlug = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  return {
+    title,
+    company,
+    location: `${city}, IL`,
+    locationNormalized: `${city}, Illinois`,
+    platform: 'LINKEDIN',
+    url: `https://www.linkedin.com/jobs/view/${slug}-at-${companySlug}-${id}`,
+    jobId: id
+  };
+}
+
+function linkedInListing(title, company, city, id) {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const companySlug = company.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+
+  return {
+    title: `${company} hiring ${title} in ${city}, IL | LinkedIn`,
+    snippet: `${company} · ${city}, IL`,
+    url: `https://www.linkedin.com/jobs/view/${slug}-at-${companySlug}-${id}`
+  };
+}
+
+test('identical titles score 40 and a different role that still matches scores 15', () => {
+  const ulta = linkedInJob('Customer Care AI Program Lead', 'Ulta Beauty', 'Chicago', '4475184050');
+  const same = matchReposts(ulta, [
+    linkedInListing('Customer Care AI Program Lead', 'Ulta Beauty', 'Chicago', '4463981362'),
+    linkedInListing('Customer Care AI Program Lead', 'Ulta Beauty', 'Chicago', '4445720940')
+  ]);
+  const mobile = linkedInJob('Senior Data Science Engineer', 'T-Mobile', 'Chicago', '4474577888');
+  mobile.location = 'New York, NY';
+  mobile.locationNormalized = 'New York, New York';
+  const mobileMatch = linkedInListing('Senior Data Science Engineer', 'T-Mobile', 'New York', '4460918631');
+  mobileMatch.snippet = 'T-Mobile · New York, NY';
+  mobileMatch.title = 'T-Mobile hiring Senior Data Science Engineer in New York, NY | LinkedIn';
+  const engineer = matchReposts(
+    linkedInJob('Senior Data Engineer', 'Acme', 'Chicago', '4470000001'),
+    [linkedInListing('Senior Data Science Engineer', 'Acme', 'Chicago', '4460000002')]
+  );
+  const petfolk = matchReposts(
+    linkedInJob('Strategy Lead, AI', 'Petfolk', 'Chicago', '4470000003'),
+    [linkedInListing('Strategy Lead, AI-Marketing', 'Petfolk', 'Chicago', '4460000004')]
+  );
+  const qualcomm = matchReposts(
+    linkedInJob('Validation Lead, Staff', 'Qualcomm', 'Chicago', '4470000005'),
+    [{
+      title: 'Validation Engineer at Qualcomm',
+      snippet: 'Qualcomm · Chicago, IL · Validation Lead, Staff',
+      url: 'https://www.linkedin.com/jobs/view/validation-engineer-at-qualcomm-4460000006'
+    }]
+  );
+  const seniority = matchReposts(
+    linkedInJob('Senior Data Engineer', 'Acme', 'Chicago', '4470000007'),
+    [linkedInListing('Data Engineer', 'Acme', 'Chicago', '4460000008')]
+  );
+  const bare = matchReposts(
+    linkedInJob('Data Engineer', 'Acme', 'Chicago', '4470000009'),
+    [{
+      title: 'See Data Engineer jobs',
+      snippet: 'Acme · Chicago, IL',
+      url: 'https://www.linkedin.com/jobs/view/4460000010'
+    }]
+  );
+  const mixed = matchReposts(mobile, [
+    mobileMatch,
+    linkedInListing('Senior Data Engineer', 'T-Mobile', 'New York', '4460000011')
+  ].map((item, index) => (
+    index === 1
+      ? { ...item, snippet: 'T-Mobile · New York, NY', title: 'T-Mobile hiring Senior Data Engineer in New York, NY | LinkedIn' }
+      : item
+  )));
+  const pair = matchReposts(
+    linkedInJob('Senior Data Engineer', 'Acme', 'Chicago', '4470000012'),
+    [
+      linkedInListing('Senior Data Science Engineer', 'Acme', 'Chicago', '4460000013'),
+      linkedInListing('Data Science Engineer', 'Acme', 'Chicago', '4460000014')
+    ]
+  );
+
+  assert.equal(same.score, 40);
+  assert.equal(same.count, 2);
+  assert.equal(same.matches.length, 2);
+  assert.match(same.matches[0].title, /customer care ai program lead/i);
+  assert.equal(matchReposts(mobile, [mobileMatch]).score, 40);
+  assert.equal(engineer.score, SIMILAR_REPOST_SCORE);
+  assert.equal(engineer.count, 1);
+  assert.equal(petfolk.score, SIMILAR_REPOST_SCORE);
+  assert.equal(petfolk.count, 1);
+  assert.equal(qualcomm.score, SIMILAR_REPOST_SCORE);
+  assert.equal(qualcomm.count, 1);
+  assert.equal(seniority.score, REPOST_SCORE);
+  assert.equal(bare.score, SIMILAR_REPOST_SCORE);
+  assert.equal(bare.count, 1);
+  assert.equal(bare.matches[0].title, '');
+  assert.equal(mixed.score, 40);
+  assert.equal(mixed.count, 2);
+  assert.equal(pair.score, SIMILAR_REPOST_SCORE);
+  assert.equal(pair.count, 2);
+  assert.equal(pair.score === 30, false);
+
+  const sandbox = { console };
+  sandbox.module = { exports: {} };
+  sandbox.exports = sandbox.module.exports;
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('../lib/heuristics.js', import.meta.url), 'utf8'), sandbox);
+  const client = sandbox.module.exports.scoreRepostMatches;
+
+  assert.equal(client(ulta.title, same.matches), scoreRepostMatches(ulta.title, same.matches));
+  assert.equal(client('Senior Data Engineer', engineer.matches), SIMILAR_REPOST_SCORE);
+  assert.equal(client('Data Engineer', bare.matches), SIMILAR_REPOST_SCORE);
+  assert.equal(client(mobile.title, mixed.matches), 40);
+  assert.equal(client('Senior Data Engineer', pair.matches), SIMILAR_REPOST_SCORE);
 });
 
 test('a cached single LinkedIn match does not score a Workday job', async () => {
@@ -312,6 +431,7 @@ test('the current posting is excluded under every url form, including search res
       available: true,
       unavailable: false,
       jobId: '4474577888',
+      jobTitle: 'Senior Data Science Engineer',
       url: 'https://www.linkedin.com/jobs/search-results/?currentJobId=4474577888',
       matches: [
         { url: selfForms[0], dateLabel: 'Date not shown' },
@@ -415,13 +535,15 @@ test('repost results cache for 24 hours under the linkedin key', async () => {
   await detectReposts(JOB, deps);
 
   assert.equal(calls, 1);
-  assert.equal(repostCacheKey(JOB), 'linkedin_repost_v4_axon_software-engineer_seattle-washington');
+  assert.equal(repostCacheKey(JOB), 'linkedin_repost_v5_axon_software-engineer_seattle-washington');
 });
 
 test('a stored confirmed duplicate is rescored at the current weight', async () => {
   const cache = new MemoryCache();
   const job = {
     ...JOB,
+    title: 'Senior Data Science Engineer',
+    company: 'T-Mobile',
     location: 'New York, NY',
     locationNormalized: 'New York, New York'
   };
@@ -516,7 +638,7 @@ test('the score widget ranks a confirmed duplicate above an old ATS posting', ()
     { score: 0, available: true, unavailable: false }
   ).find((factor) => factor.label === 'Company size');
 
-  assert.equal(found.value, '2 other postings');
+  assert.equal(found.value, '2 similar listings');
   assert.equal(found.entries.length, 2);
   assert.equal(found.entries[0].text, 'date not shown');
   assert.equal(found.entries[1].text, '4 weeks ago');
@@ -616,6 +738,7 @@ test('job-id ages estimate a middle posting and stay quiet without a range', () 
     {
       score: 40,
       count: 3,
+      jobTitle: 'Senior Data Science Engineer',
       now,
       idDates: pairs,
       available: true,
@@ -636,6 +759,7 @@ test('job-id ages estimate a middle posting and stay quiet without a range', () 
     {
       score: 40,
       count: 2,
+      jobTitle: 'Senior Data Science Engineer',
       now,
       idDates: [],
       available: true,
@@ -652,7 +776,8 @@ test('job-id ages estimate a middle posting and stay quiet without a range', () 
   ).find((item) => item.label === 'Reposts');
 
   assert.equal(api.estimateEarlierAge(middle, pairs, now), 'about 2 weeks earlier (estimated)');
-  assert.equal(api.estimateEarlierAge('1000000000', pairs, now), 'date not shown');
+  assert.equal(api.estimateEarlierAge('1000000000', pairs, now), 'over 4 weeks earlier');
+  assert.equal(api.estimateEarlierAge('5000000000', pairs, now), 'date not shown');
   assert.equal(row.value, '2 other postings');
   assert.equal(row.detail, '2 LinkedIn postings match this title, company, and location.');
   assert.equal(row.entries.length, 2);
