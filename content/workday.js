@@ -598,6 +598,29 @@
     }, 500);
   }
 
+  const GHOST_BODY = 'M12 2.2c-4.2 0-7.4 3.3-7.4 7.4V20.8c0 .7.8 1 1.3.5l1.8-1.8c.4-.4 1.1-.4 1.5 0l1.6 1.6c.4.4 1 .4 1.4 0l1.6-1.6c.4-.4 1.1-.4 1.5 0l1.6 1.6c.4.4 1 .4 1.4 0l1.8-1.8c.5-.5 1.3-.2 1.3.5V9.6c0-4.1-3.2-7.4-7.4-7.4z';
+
+  function appendGhostIcon(parent, size) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('width', String(size));
+    svg.setAttribute('height', String(size));
+    svg.setAttribute('aria-hidden', 'true');
+    const body = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    body.setAttribute('fill', '#ffffff');
+    body.setAttribute('d', GHOST_BODY);
+    const eye = (cx) => {
+      const node = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      node.setAttribute('cx', String(cx));
+      node.setAttribute('cy', '10');
+      node.setAttribute('r', '1.25');
+      node.setAttribute('fill', '#1e293b');
+      return node;
+    };
+    svg.append(body, eye(9), eye(15));
+    parent.append(svg);
+  }
+
   function injectListBadges() {
     const titles = document.querySelectorAll('[data-automation-id="jobTitle"]');
 
@@ -628,7 +651,6 @@
       const badge = document.createElement('button');
       badge.className = 'ghd-badge';
       badge.type = 'button';
-      badge.textContent = '👻';
       badge.title = 'Save this job for Ghost Job Detector';
       badge.style.cssText = [
         'margin-left:8px',
@@ -639,8 +661,12 @@
         'cursor:pointer',
         'background:#6d4aff',
         'color:white',
-        'font-size:14px'
+        'font-size:14px',
+        'display:inline-flex',
+        'align-items:center',
+        'justify-content:center'
       ].join(';');
+      appendGhostIcon(badge, 16);
 
       listen(badge, 'click', (event) => {
         event.preventDefault();
