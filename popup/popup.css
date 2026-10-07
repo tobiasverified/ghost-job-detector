@@ -35,7 +35,6 @@
 
 body {
   width: 320px;
-  min-height: 480px;
   max-height: 600px;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -76,6 +75,47 @@ body {
   font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.3px;
+}
+
+.header-version {
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.page-status {
+  font-size: 13px;
+}
+
+.popup-details {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+}
+
+.popup-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.popup-details ul {
+  margin: 8px 0 0 18px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.advanced-warning {
+  color: var(--yellow-warning);
+  font-size: 12px;
+}
+
+.popup-details .api-base-row {
+  margin-top: 10px;
+}
+
+.popup-details .btn-secondary {
+  border: 1px solid var(--border-color);
 }
 
 .refresh-btn {

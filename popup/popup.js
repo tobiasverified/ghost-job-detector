@@ -70,6 +70,64 @@ function extensionVersion() {
   }
 }
 
+export const READY_ON_PAGE = 'Ready on this page';
+export const OPEN_A_JOB = 'Open a LinkedIn or Workday job to see the widget.';
+
+export function isSupportedJobPage(rawUrl) {
+  let url;
+
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+
+  const host = url.hostname.toLowerCase();
+
+  if (host === 'linkedin.com' || host.endsWith('.linkedin.com')) {
+    return url.pathname.includes('/jobs/');
+  }
+
+  return host.endsWith('.myworkdayjobs.com');
+}
+
+export function pageStatusText(rawUrl) {
+  return isSupportedJobPage(rawUrl) ? READY_ON_PAGE : OPEN_A_JOB;
+}
+
+export function formatExtensionVersion(version) {
+  const text = String(version || '').trim();
+  return text ? `v${text}` : '';
+}
+
+export function normalizeApiBase(value) {
+  return String(value || '').trim().replace(/\/$/, '');
+}
+
+export function isAllowedApiBase(value) {
+  try {
+    const url = new URL(value);
+    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    return url.protocol === 'https:' || (url.protocol === 'http:' && local);
+  } catch {
+    return false;
+  }
+}
+
+export function apiBaseDecision(value) {
+  const next = normalizeApiBase(value);
+
+  if (!next) {
+    return { action: 'clear', value: '' };
+  }
+
+  if (!isAllowedApiBase(next)) {
+    return { action: 'reject', value: next };
+  }
+
+  return { action: 'save', value: next };
+}
+
 if (typeof document !== 'undefined') {
   document.addEventListener('DOMContentLoaded', init);
 }
@@ -101,13 +159,12 @@ async function migrateStorage() {
   await chrome.storage.local.set(next);
 }
 
-function isAllowedApiBase(value) {
+async function activeTabUrl() {
   try {
-    const url = new URL(value);
-    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    return url.protocol === 'https:' || (url.protocol === 'http:' && local);
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tabs?.[0]?.url || '';
   } catch {
-    return false;
+    return '';
   }
 }
 
@@ -117,6 +174,8 @@ async function init() {
   const status = document.getElementById('apiBaseStatus');
   const stored = await chrome.storage.local.get(API_BASE_KEY);
   input.value = stored[API_BASE_KEY] || '';
+  document.getElementById('extensionVersion').textContent = formatExtensionVersion(extensionVersion());
+  document.getElementById('pageStatus').textContent = pageStatusText(await activeTabUrl());
 
   renderPopupLinks(document.getElementById('popupLinks'), {
     supportEmail: SUPPORT_EMAIL,
@@ -126,14 +185,20 @@ async function init() {
   });
 
   document.getElementById('saveApiBase').addEventListener('click', async () => {
-    const next = String(input.value || '').trim().replace(/\/$/, '');
+    const decision = apiBaseDecision(input.value);
 
-    if (next && !isAllowedApiBase(next)) {
+    if (decision.action === 'reject') {
       status.textContent = 'Use an https URL, or http://localhost for local development.';
       return;
     }
 
-    await chrome.storage.local.set({ [API_BASE_KEY]: next });
-    status.textContent = next ? 'Saved. The job-page widget will use this backend.' : 'Cleared. The default backend will be used.';
+    await chrome.storage.local.set({ [API_BASE_KEY]: decision.value });
+    status.textContent = decision.value ? 'Saved. The job-page widget will use this backend.' : 'Cleared. The default backend will be used.';
+  });
+
+  document.getElementById('resetApiBase').addEventListener('click', async () => {
+    input.value = '';
+    await chrome.storage.local.remove(API_BASE_KEY);
+    status.textContent = 'Reset. The default backend will be used.';
   });
 }

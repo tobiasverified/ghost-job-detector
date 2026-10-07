@@ -9,17 +9,34 @@
   <div class="popup-container">
     <header class="header">
       <div class="header-brand">
-        <span class="app-icon">👻</span>
+        <span class="app-icon" aria-hidden="true">👻</span>
         <h1 class="app-title">Ghost Job Detector</h1>
       </div>
+      <p id="extensionVersion" class="header-version"></p>
     </header>
-    <section class="factors-section">
-      <p class="summary-text">The score stays on the job page. Open a LinkedIn or Workday posting and use the widget in the corner.</p>
-      <label class="factor-label" for="apiBaseInput">Backend URL</label>
-      <input id="apiBaseInput" type="url" placeholder="https://your-app.vercel.app" />
-      <p id="apiBaseStatus" class="summary-text"></p>
-      <button class="btn btn-primary" id="saveApiBase" type="button">Save</button>
-    </section>
+    <p id="pageStatus" class="page-status">Open a LinkedIn or Workday job to see the widget.</p>
+    <p class="summary-text">Shows warning signs, not proof. A clean result can't confirm a role is real.</p>
+    <details class="popup-details">
+      <summary>What it checks</summary>
+      <ul>
+        <li>Reposts</li>
+        <li>Layoffs coverage</li>
+        <li>Glassdoor rating</li>
+        <li>Description clarity</li>
+      </ul>
+    </details>
+    <p class="summary-text">Sends the job title, company, location and description text to our server to run checks.</p>
+    <details class="popup-details">
+      <summary>Advanced</summary>
+      <div class="api-base-row">
+        <label class="factor-label" for="apiBaseInput">Backend URL</label>
+        <input id="apiBaseInput" type="url" placeholder="https://your-app.vercel.app" autocomplete="off" spellcheck="false" />
+        <p class="advanced-warning">Job text will be sent to that server.</p>
+        <p id="apiBaseStatus" class="summary-text"></p>
+        <button class="btn btn-primary" id="saveApiBase" type="button">Save</button>
+        <button class="btn btn-secondary" id="resetApiBase" type="button">Reset to default</button>
+      </div>
+    </details>
     <nav id="popupLinks" class="popup-links" aria-label="Help"></nav>
   </div>
   <script type="module" src="popup.js"></script>

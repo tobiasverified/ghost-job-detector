@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { feedbackBody, feedbackMailto, renderPopupLinks } from '../popup/popup.js';
+import {
+  OPEN_A_JOB,
+  READY_ON_PAGE,
+  apiBaseDecision,
+  feedbackBody,
+  feedbackMailto,
+  formatExtensionVersion,
+  pageStatusText,
+  renderPopupLinks
+} from '../popup/popup.js';
 
 function createElement(tag) {
   return {
@@ -107,4 +117,53 @@ test('the report link is a static feedback template', () => {
   assert.equal(feedbackBody().includes('Which site (LinkedIn or Workday):'), true);
   assert.equal(feedbackBody().includes('What you expected:'), true);
   assert.equal(/https?:|linkedin\.com\/jobs|myworkdayjobs/i.test(feedbackBody()), false);
+});
+
+test('the popup explains the check and hides the backend until Advanced is opened', () => {
+  const html = readFileSync(new URL('../popup/popup.html', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../popup/popup.js', import.meta.url), 'utf8');
+  const advanced = html.slice(html.indexOf('<summary>Advanced</summary>'), html.indexOf('</details>', html.indexOf('<summary>Advanced</summary>')));
+
+  assert.match(html, /👻/);
+  assert.match(html, /<h1 class="app-title">Ghost Job Detector<\/h1>/);
+  assert.match(html, /id="extensionVersion"/);
+  assert.equal(html.includes('Shows warning signs, not proof. A clean result can\'t confirm a role is real.'), true);
+  assert.equal(html.includes('Sends the job title, company, location and description text to our server to run checks.'), true);
+  assert.deepEqual(html.match(/<details\b[^>]*>/g), [
+    '<details class="popup-details">',
+    '<details class="popup-details">'
+  ]);
+  assert.deepEqual(
+    ['Reposts', 'Layoffs coverage', 'Glassdoor rating', 'Description clarity'].map((item) => html.includes(`<li>${item}</li>`)),
+    [true, true, true, true]
+  );
+  assert.equal(advanced.includes('Backend URL'), true);
+  assert.equal(advanced.includes('Job text will be sent to that server.'), true);
+  assert.equal(advanced.includes('Reset to default'), true);
+  assert.equal(html.indexOf('Backend URL') > html.indexOf('<summary>Advanced</summary>'), true);
+  assert.equal(/<button\b[^>]*>[^<]*run check/i.test(html), false);
+  assert.equal(html.includes('ghostScore'), false);
+  assert.equal(/\bfetch\s*\(|XMLHttpRequest|WebSocket/.test(source), false);
+});
+
+test('the status line follows the active tab', () => {
+  assert.equal(pageStatusText('https://www.linkedin.com/jobs/view/4476508048'), READY_ON_PAGE);
+  assert.equal(pageStatusText('https://www.linkedin.com/jobs/search?currentJobId=4476508048'), READY_ON_PAGE);
+  assert.equal(pageStatusText('https://linkedin.com/jobs/view/1'), READY_ON_PAGE);
+  assert.equal(pageStatusText('https://acme.wd1.myworkdayjobs.com/en-US/Acme_Careers/job/Role_1'), READY_ON_PAGE);
+  assert.equal(pageStatusText('https://www.linkedin.com/company/acme'), OPEN_A_JOB);
+  assert.equal(pageStatusText('https://www.linkedin.com/feed/'), OPEN_A_JOB);
+  assert.equal(pageStatusText('https://example.com/jobs/1'), OPEN_A_JOB);
+  assert.equal(pageStatusText(''), OPEN_A_JOB);
+});
+
+test('a custom backend must be https, except localhost', () => {
+  assert.equal(formatExtensionVersion('1.1.10'), 'v1.1.10');
+  assert.equal(formatExtensionVersion(''), '');
+  assert.deepEqual(apiBaseDecision('  https://example.com/ '), { action: 'save', value: 'https://example.com' });
+  assert.deepEqual(apiBaseDecision('http://localhost:3000/'), { action: 'save', value: 'http://localhost:3000' });
+  assert.deepEqual(apiBaseDecision('http://127.0.0.1:8787'), { action: 'save', value: 'http://127.0.0.1:8787' });
+  assert.equal(apiBaseDecision('http://example.com').action, 'reject');
+  assert.equal(apiBaseDecision('http://localhost.evil.com').action, 'reject');
+  assert.deepEqual(apiBaseDecision('   '), { action: 'clear', value: '' });
 });
