@@ -124,7 +124,8 @@ test('the popup explains the check and hides the backend until Advanced is opene
   const source = readFileSync(new URL('../popup/popup.js', import.meta.url), 'utf8');
   const advanced = html.slice(html.indexOf('<summary>Advanced</summary>'), html.indexOf('</details>', html.indexOf('<summary>Advanced</summary>')));
 
-  assert.match(html, /👻/);
+  assert.match(html, /<img class="app-icon" src="\.\.\/icons\/icon48\.png"/);
+  assert.equal(html.includes('👻'), false);
   assert.match(html, /<h1 class="app-title">Ghost Job Detector<\/h1>/);
   assert.match(html, /id="extensionVersion"/);
   assert.equal(html.includes('Shows warning signs, not proof. A clean result can\'t confirm a role is real.'), true);
