@@ -464,7 +464,7 @@ test('an analysis cache hit still rechecks reposts when the factor version match
   });
 
   assert.equal(FACTOR_VERSIONS.reposts, 'v3');
-  assert.match(analysisCacheKey(job), /^analyze:v26:/);
+  assert.match(analysisCacheKey(job), /^analyze:v27:/);
   const first = await analyzeJobPosting(job, deps);
   assert.equal(first.cached, false);
   assert.equal(first.factorVersions.reposts, 'v3');

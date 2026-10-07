@@ -179,7 +179,7 @@ function remoteAnalysis(rating) {
       layoffs: { detected: false, unavailable: false, score: 0 },
       reviews: { rating, platform: 'Glassdoor', score: 0, unavailable: false },
       reposts: { score: 0, unavailable: false },
-      hiringRatio: { available: false, score: 0 }
+      hiringRatio: { available: false, score: 0, label: '10,001+ Employees', glassdoorSize: '10,001+ Employees' }
     },
     cached: false
   };
@@ -195,7 +195,7 @@ test('a full check with fewer than two informative factors shows no score', asyn
   };
   const scored = {
     layoff: { unavailable: true, detected: false, score: 0 },
-    reviews: { rating: 3.6, unavailable: false, score: 4, platform: 'Glassdoor' },
+    reviews: { rating: 3.6, reviewCount: 5, unavailable: false, score: 4, platform: 'Glassdoor' },
     workforce: { available: false, employees: null, score: 0 },
     reposts: { unavailable: false, available: true, score: 0, detail: 'No other LinkedIn posting matched this role.' }
   };
@@ -338,7 +338,7 @@ test('a withheld response shows no score and keeps finished rows for a retry', a
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { unavailable: false, detected: false, score: 0 },
-      reviews: { rating: 4.1, platform: 'Glassdoor', score: 0, unavailable: false },
+      reviews: { rating: 4.1, reviewCount: 5, platform: 'Glassdoor', score: 0, unavailable: false },
       hiringRatio: { available: false, score: 0 },
       reposts: { pending: true, score: 0, unavailable: true, available: false }
     }
@@ -364,7 +364,7 @@ test('a partial check shows the server score and unfinished rows, with no automa
     factors: {
       vagueness: { score: 30, label: 'Very Vague' },
       layoffs: { detected: false, unavailable: false, score: 0 },
-      reviews: { rating: 4.1, platform: 'Glassdoor', score: 15, unavailable: false },
+      reviews: { rating: 4.1, reviewCount: 5, platform: 'Glassdoor', score: 15, unavailable: false },
       hiringRatio: { available: false, timedOut: true, score: 0, detail },
       reposts: { pending: true, score: 0, unavailable: true, available: false }
     }
@@ -421,7 +421,7 @@ test('a partial check stays on its job and does not retry on its own', async () 
     factors: {
       vagueness: { score: 0, label: 'Clear' },
       layoffs: { detected: false, unavailable: false, score: 0 },
-      reviews: { rating: 4.1, platform: 'Glassdoor', score: 0, unavailable: false },
+      reviews: { rating: 4.1, reviewCount: 5, platform: 'Glassdoor', score: 0, unavailable: false },
       hiringRatio: { available: false, timedOut: true, score: 0, detail: 'Still finishing. Try again in a few seconds.' },
       reposts: { pending: true, score: 0, unavailable: true, available: false }
     }
