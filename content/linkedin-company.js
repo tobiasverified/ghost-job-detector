@@ -10,6 +10,103 @@
   const headcount = globalThis.GhdHeadcount;
   let storedMarker = '';
   let timer = null;
+  let observer = null;
+  let contextTornDown = false;
+  const timers = new Set();
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+  function extensionContextInvalidated(error) {
+    return /extension context invalidated/i.test(String(error?.message || error || ''));
+  }
+
+  function later(fn, delay) {
+    if (contextTornDown) {
+      return 0;
+    }
+
+    const id = nativeSetTimeout(() => {
+      timers.delete(id);
+
+      if (!contextTornDown) {
+        fn();
+      }
+    }, delay);
+    timers.add(id);
+    return id;
+  }
+
+  function teardownExtensionContext() {
+    if (contextTornDown) {
+      return;
+    }
+
+    contextTornDown = true;
+
+    try {
+      for (const id of [...timers]) {
+        try {
+          nativeClearTimeout(id);
+        } catch {
+          // The timer already fired.
+        }
+      }
+
+      timers.clear();
+      timer = null;
+    } catch {
+      // Timers are abandoned with the dead context.
+    }
+
+    try {
+      observer?.disconnect();
+    } catch {
+      // Already disconnected.
+    }
+
+    observer = null;
+
+    try {
+      document.querySelectorAll('#ghd-widget-host, .ghd-badge').forEach((node) => {
+        try {
+          node.remove();
+        } catch {
+          // Already detached.
+        }
+      });
+    } catch {
+      // Removal is best-effort.
+    }
+  }
+
+  function callChrome(fn) {
+    try {
+      const result = fn();
+
+      if (result && typeof result.then === 'function') {
+        return result.then(
+          (value) => value,
+          (error) => {
+            if (extensionContextInvalidated(error)) {
+              teardownExtensionContext();
+              return undefined;
+            }
+
+            throw error;
+          }
+        );
+      }
+
+      return result;
+    } catch (error) {
+      if (extensionContextInvalidated(error)) {
+        teardownExtensionContext();
+        return undefined;
+      }
+
+      throw error;
+    }
+  }
 
   function capture() {
     if (!headcount || !chrome?.storage?.local?.set) {
@@ -44,23 +141,31 @@
       payload[key] = record;
     }
 
-    const write = chrome.storage.local.set(payload);
+    let write;
+
+    try {
+      write = callChrome(() => chrome.storage.local.set(payload));
+    } catch (error) {
+      console.error('[GHD] company headcount was not saved', error);
+      return;
+    }
 
     if (write && typeof write.catch === 'function') {
-      write.catch(() => {
-        // Storage can reject the write while the page is closing.
+      write.catch((error) => {
+        console.error('[GHD] company headcount was not saved', error);
       });
     }
   }
 
   function schedule() {
-    clearTimeout(timer);
-    timer = setTimeout(capture, 300);
+    nativeClearTimeout(timer);
+    timers.delete(timer);
+    timer = later(capture, 300);
   }
 
-  [0, 700, 2000, 5000].forEach((delay) => setTimeout(capture, delay));
+  [0, 700, 2000, 5000].forEach((delay) => later(capture, delay));
 
-  const observer = new MutationObserver(schedule);
+  observer = new MutationObserver(schedule);
   observer.observe(document.documentElement, { childList: true, subtree: true });
   capture();
 })();

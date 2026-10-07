@@ -5,12 +5,13 @@ import vm from 'node:vm';
 
 // A small stand-in for the page: the panel's HTML is kept as a string, and
 // buttons found by id can be clicked from the test.
-function loadWidget({ holdPay = false } = {}) {
+function loadWidget({ holdPay = false, sendError = null, trackTeardown = false } = {}) {
   const handlers = new Map();
   const panel = { innerHTML: '' };
   const stored = {};
   const sent = [];
   const pendingReplies = [];
+  const reported = [];
 
   function control(id) {
     if (!panel.innerHTML.includes(`id="${id}"`)) {
@@ -39,14 +40,30 @@ function loadWidget({ holdPay = false } = {}) {
   const host = {
     style: {},
     isConnected: false,
+    removals: 0,
     attachShadow() {
       return shadow;
     },
-    addEventListener() {}
+    addEventListener() {},
+    remove() {
+      this.removals += 1;
+      this.isConnected = false;
+    }
   };
   const sandbox = {
     URL,
-    console: { ...console, info() {} },
+    console: {
+      ...console,
+      info() {},
+      error(...args) {
+        if (!sendError) {
+          console.error(...args);
+          return;
+        }
+
+        reported.push(args.map((item) => item?.message || String(item)).join(' '));
+      }
+    },
     performance,
     setTimeout,
     clearTimeout,
@@ -69,7 +86,11 @@ function loadWidget({ holdPay = false } = {}) {
           node.isConnected = true;
         }
       },
-      querySelectorAll() {
+      querySelectorAll(selector) {
+        if (trackTeardown && selector === '#ghd-widget-host' && host.isConnected) {
+          return [host];
+        }
+
         return [];
       }
     },
@@ -98,7 +119,11 @@ function loadWidget({ holdPay = false } = {}) {
         sendMessage(message) {
           sent.push(message);
 
-          if (message.type === 'PAY_MARKET' && !holdPay) {
+          if (sendError && message.type === 'ENRICH_JOB') {
+            return Promise.reject(sendError);
+          }
+
+          if (sendError || (message.type === 'PAY_MARKET' && !holdPay)) {
             return Promise.resolve({ ok: false });
           }
 
@@ -119,6 +144,8 @@ function loadWidget({ holdPay = false } = {}) {
     heuristics: sandbox.GhostJobHeuristics,
     panel,
     sent,
+    host,
+    reported,
     click(id) {
       const handler = handlers.get(id);
       assert.ok(handler, `no ${id} button on the panel`);
@@ -872,4 +899,55 @@ test('a seniority title without stated years keeps the posted pay and does not a
   assert.equal(message.body.description.includes('5 years of experience'), true);
   stated.reply(2, { compared: false });
   await flush();
+});
+
+test('an invalidated sendMessage tears the widget down once and throws nothing', async () => {
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+
+  try {
+    const page = loadWidget({
+      sendError: new Error('Extension context invalidated'),
+      trackTeardown: true
+    });
+
+    await page.widget.analyze(jobA);
+    page.click('ghd-full');
+    await flush();
+    await flush();
+
+    assert.equal(unhandled.length, 0);
+    assert.equal(page.host.removals, 1);
+    assert.equal(page.host.isConnected, false);
+    assert.equal(page.reported.some((line) => /extension context invalidated/i.test(line)), false);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+test('a sendMessage error other than an invalidated context is still reported', async () => {
+  const unhandled = [];
+  const onUnhandled = (error) => unhandled.push(error);
+  process.on('unhandledRejection', onUnhandled);
+
+  try {
+    const page = loadWidget({
+      sendError: new Error('receiver missing'),
+      trackTeardown: true
+    });
+
+    await page.widget.analyze(jobA);
+    page.click('ghd-full');
+    await flush();
+    await flush();
+
+    assert.equal(page.host.removals, 0);
+    assert.equal(page.host.isConnected, true);
+    assert.ok(page.reported.some((line) => line.includes('receiver missing')));
+    assert.match(page.panel.innerHTML, /Full check unavailable/);
+    assert.equal(unhandled.length, 0);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
 });

@@ -249,24 +249,26 @@
         return result.then(
           (value) => value,
           (error) => {
-            if (extensionContextInvalidated(error)) {
-              teardownExtensionContext();
-            }
-
-            throw error;
+          if (extensionContextInvalidated(error)) {
+            teardownExtensionContext();
+            return undefined;
           }
-        );
-      }
 
-      return result;
-    } catch (error) {
-      if (extensionContextInvalidated(error)) {
-        teardownExtensionContext();
-      }
-
-      throw error;
+          throw error;
+        }
+      );
     }
+
+    return result;
+  } catch (error) {
+    if (extensionContextInvalidated(error)) {
+      teardownExtensionContext();
+      return undefined;
+    }
+
+    throw error;
   }
+}
 
   function watchExtensionContext() {
     setInterval(() => {
