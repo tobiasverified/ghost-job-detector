@@ -1,0 +1,5 @@
+supabase/
+test/
+tmp-*
+.cursor/
+.env*

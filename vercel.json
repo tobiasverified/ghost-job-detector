@@ -1,7 +1,7 @@
 {
   "version": 2,
   "buildCommand": "exit 0",
-  "outputDirectory": ".",
+  "outputDirectory": "public",
   "public": false,
   "functions": {
     "api/analyze-job.js": { "maxDuration": 15 },
