@@ -50,6 +50,14 @@ function loadWidget({ holdPay = false } = {}) {
     performance,
     setTimeout,
     clearTimeout,
+    setInterval(fn, delay, ...args) {
+      const timer = global.setInterval(fn, delay, ...args);
+      timer.unref?.();
+      return timer;
+    },
+    clearInterval(timer) {
+      global.clearInterval(timer);
+    },
     document: {
       createElement(tag) {
         return tag === 'div' && !host.isConnected && !host.created
@@ -86,6 +94,7 @@ function loadWidget({ holdPay = false } = {}) {
         }
       },
       runtime: {
+        id: 'ghost-job-detector',
         sendMessage(message) {
           sent.push(message);
 

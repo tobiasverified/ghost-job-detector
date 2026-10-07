@@ -12,6 +12,234 @@
   let lastUrl = location.href;
   let extractionTimer = null;
   let badgeTimer = null;
+  // A reload or update leaves this script running after chrome.* starts failing.
+  const CONTEXT_CHECK_MS = 2000;
+  let contextTornDown = false;
+  const pendingTimers = new Set();
+  const observers = new Set();
+  const removeListeners = [];
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const nativeSetInterval = globalThis.setInterval.bind(globalThis);
+  const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);
+  const nativeClearInterval = globalThis.clearInterval.bind(globalThis);
+  const NativeMutationObserver = globalThis.MutationObserver;
+
+  function extensionContextInvalidated(error) {
+    return /extension context invalidated/i.test(String(error?.message || error || ''));
+  }
+
+  function extensionContextAlive() {
+    try {
+      return Boolean(chrome.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function setTimeout(fn, delay, ...args) {
+    if (contextTornDown) {
+      return 0;
+    }
+
+    const id = nativeSetTimeout(() => {
+      pendingTimers.delete(id);
+
+      if (!contextTornDown) {
+        fn(...args);
+      }
+    }, delay);
+    pendingTimers.add(id);
+
+    if (typeof id?.unref === 'function') {
+      id.unref();
+    }
+
+    return id;
+  }
+
+  function clearTimeout(id) {
+    pendingTimers.delete(id);
+
+    try {
+      nativeClearTimeout(id);
+    } catch {
+      // The timer already fired.
+    }
+  }
+
+  function setInterval(fn, delay, ...args) {
+    if (contextTornDown) {
+      return 0;
+    }
+
+    const id = nativeSetInterval(() => {
+      if (!contextTornDown) {
+        fn(...args);
+      }
+    }, delay);
+    pendingTimers.add(id);
+
+    if (typeof id?.unref === 'function') {
+      id.unref();
+    }
+
+    return id;
+  }
+
+  function clearInterval(id) {
+    pendingTimers.delete(id);
+
+    try {
+      nativeClearInterval(id);
+    } catch {
+      // The timer is already cleared.
+    }
+  }
+
+  function MutationObserver(callback) {
+    const observer = new NativeMutationObserver((...args) => {
+      if (!contextTornDown) {
+        callback(...args);
+      }
+    });
+    observers.add(observer);
+    return observer;
+  }
+
+  function listen(target, type, handler, options) {
+    if (!target || typeof target.addEventListener !== 'function' || contextTornDown) {
+      return;
+    }
+
+    try {
+      target.addEventListener(type, handler, options);
+      removeListeners.push(() => {
+        try {
+          target.removeEventListener(type, handler, options);
+        } catch {
+          // The node is already gone.
+        }
+      });
+    } catch {
+      // The page still works without this listener.
+    }
+  }
+
+  function removeNodes(selector) {
+    let nodes = [];
+
+    try {
+      nodes = document.querySelectorAll(selector);
+    } catch {
+      return;
+    }
+
+    for (const node of nodes) {
+      try {
+        node.remove();
+      } catch {
+        // Already detached.
+      }
+    }
+  }
+
+  function teardownExtensionContext() {
+    if (contextTornDown) {
+      return;
+    }
+
+    contextTornDown = true;
+
+    try {
+      removeNodes('#ghd-widget-host');
+      removeNodes('.ghd-badge');
+    } catch {
+      // Removal is best-effort.
+    }
+
+    try {
+      for (const id of [...pendingTimers]) {
+        try {
+          nativeClearTimeout(id);
+        } catch {
+          // Not a timeout.
+        }
+
+        try {
+          nativeClearInterval(id);
+        } catch {
+          // Not an interval.
+        }
+      }
+
+      pendingTimers.clear();
+    } catch {
+      // Timers are abandoned with the dead context.
+    }
+
+    try {
+      for (const observer of [...observers]) {
+        try {
+          observer.disconnect();
+        } catch {
+          // Already disconnected.
+        }
+      }
+
+      observers.clear();
+    } catch {
+      // Observers are abandoned with the dead context.
+    }
+
+    try {
+      for (const remove of [...removeListeners]) {
+        try {
+          remove();
+        } catch {
+          // The listener is already gone.
+        }
+      }
+
+      removeListeners.length = 0;
+    } catch {
+      // Listeners are abandoned with the dead context.
+    }
+  }
+
+  function callChrome(fn) {
+    try {
+      const result = fn();
+
+      if (result && typeof result.then === 'function') {
+        return result.then(
+          (value) => value,
+          (error) => {
+            if (extensionContextInvalidated(error)) {
+              teardownExtensionContext();
+            }
+
+            throw error;
+          }
+        );
+      }
+
+      return result;
+    } catch (error) {
+      if (extensionContextInvalidated(error)) {
+        teardownExtensionContext();
+      }
+
+      throw error;
+    }
+  }
+
+  function watchExtensionContext() {
+    setInterval(() => {
+      if (!extensionContextAlive()) {
+        teardownExtensionContext();
+      }
+    }, CONTEXT_CHECK_MS);
+  }
 
   function cleanText(value) {
     return String(value || '')
@@ -175,17 +403,29 @@
   }
 
   async function saveJob(job) {
-    await chrome.storage.local.set({
-      [STORAGE_KEY]: job,
-      ghd_timestamp: Date.now()
-    });
+    try {
+      await callChrome(() => chrome.storage.local.set({
+        [STORAGE_KEY]: job,
+        ghd_timestamp: Date.now()
+      }));
+    } catch (error) {
+      if (extensionContextInvalidated(error)) {
+        teardownExtensionContext();
+      }
+
+      throw error;
+    }
 
     try {
-      await chrome.runtime.sendMessage({
+      await callChrome(() => chrome.runtime.sendMessage({
         type: 'JOB_DATA_AVAILABLE',
         job
-      });
+      }));
     } catch (error) {
+      if (extensionContextInvalidated(error)) {
+        teardownExtensionContext();
+      }
+
       console.warn('[GHD] Background message failed:', error);
     }
 
@@ -400,7 +640,7 @@
         'font-size:14px'
       ].join(';');
 
-      badge.addEventListener('click', (event) => {
+      listen(badge, 'click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         saveJob(withOpenJobs({
@@ -429,7 +669,7 @@
     scheduleBadges();
   }
 
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  function onRuntimeMessage(message, sender, sendResponse) {
     if (message.type !== 'REQUEST_CURRENT_JOB') {
       return false;
     }
@@ -449,7 +689,20 @@
       .catch((error) => sendResponse({ success: false, error: error.message }));
 
     return true;
-  });
+  }
+
+  try {
+    callChrome(() => chrome.runtime.onMessage.addListener(onRuntimeMessage));
+    removeListeners.push(() => {
+      try {
+        chrome.runtime.onMessage.removeListener(onRuntimeMessage);
+      } catch {
+        // The context is already gone.
+      }
+    });
+  } catch {
+    // No listener once the extension context is dead.
+  }
 
   const observer = new MutationObserver(scheduleBadges);
   observer.observe(document.documentElement, { childList: true, subtree: true });
@@ -461,5 +714,6 @@
     }
   }, 500);
 
+  watchExtensionContext();
   processPage();
 })();

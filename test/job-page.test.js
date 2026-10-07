@@ -739,6 +739,30 @@ test('a second widget injection keeps the open panel instead of stacking another
     URL,
     console,
     hosts,
+    setTimeout,
+    clearTimeout,
+    setInterval(fn, delay, ...args) {
+      const timer = global.setInterval(fn, delay, ...args);
+      timer.unref?.();
+      return timer;
+    },
+    clearInterval(timer) {
+      global.clearInterval(timer);
+    },
+    chrome: {
+      runtime: {
+        id: 'ghost-job-detector',
+        sendMessage() {
+          return Promise.resolve();
+        }
+      },
+      storage: {
+        local: {
+          get: async () => ({}),
+          set: async () => {}
+        }
+      }
+    },
     document: {
       createElement,
       documentElement: {
