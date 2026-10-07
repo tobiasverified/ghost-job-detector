@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { MemoryCache } from '../lib/server/cache.js';
-import { resolveWorkforce } from '../lib/server/analyze.js';
+import { companySizeLine, resolveWorkforce } from '../lib/server/analyze.js';
 import { companyLookupName } from '../lib/server/companies.js';
-import { createCompanyRatingHandler, glassdoorEntityMatches, lookupCompanyRating, parseEmployeeSize, ratingCacheKey } from '../lib/server/company-rating.js';
+import { companyDetails, createCompanyRatingHandler, glassdoorEntityMatches, lookupCompanyRating, parseEmployeeSize, ratingCacheKey } from '../lib/server/company-rating.js';
 import { scoreHiringRatio } from '../lib/server/workforce.js';
 import { MemoryRateLimiter } from '../lib/server/rateLimit.js';
 
@@ -113,6 +113,23 @@ test('parseEmployeeSize reads Glassdoor size buckets', () => {
   assert.equal(parseEmployeeSize('1-50 Employees'), 26);
   assert.equal(parseEmployeeSize('5,001 to 10,000 Employees'), 7501);
   assert.equal(parseEmployeeSize('Unknown'), null);
+});
+
+test('a Glassdoor size of Unknown is not a company size', () => {
+  const details = companyDetails({
+    size: 'Unknown',
+    ratings: { overall: 3.6 },
+    counts: { reviews: 17647 }
+  });
+
+  assert.equal(details.glassdoorSize, undefined);
+  assert.equal(details.employees, null);
+
+  const line = companySizeLine({ glassdoorSize: 'Unknown' });
+  assert.equal(line.label, 'Unavailable');
+  assert.equal(line.unavailable, true);
+  assert.equal(line.glassdoorSize, '');
+  assert.equal(companySizeLine({ glassdoorSize: '501 to 1000 Employees' }).label, '501 to 1000 Employees');
 });
 
 test('company details include the rating, size bucket, and open jobs', async () => {
