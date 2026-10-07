@@ -15,6 +15,7 @@ const CLIENT_PATHS = [
   'lib/company-headcount.js',
   'popup/popup.js',
   'popup/popup.html',
+  'popup/config.js',
   'lib/widget.js',
   'lib/heuristics.js',
   'lib/job-page.js',

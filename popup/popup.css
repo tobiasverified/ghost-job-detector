@@ -440,6 +440,28 @@ body {
   font-size: 11px;
 }
 
+.popup-links {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popup-links:empty {
+  display: none;
+}
+
+.popup-links a {
+  color: var(--accent-purple);
+  font-size: 13px;
+}
+
+.popup-address {
+  color: var(--text-secondary);
+  font-size: 12px;
+  user-select: text;
+  word-break: break-all;
+}
+
 /* Utility Classes */
 .hidden {
   display: none !important;
