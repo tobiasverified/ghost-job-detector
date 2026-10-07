@@ -57,11 +57,27 @@ function loadBackground(tabs) {
         if (typeof details.func === 'function') {
           const page = {
             chrome: { runtime: { id: tab.runtimeId } },
-            GhdWidget: tab.widget,
-            __GHD_LINKEDIN_COMPANY__: tab.company === true
+            document: {
+              getElementById(id) {
+                return id === 'ghd-widget-host' ? (tab.host || null) : null;
+              }
+            },
+            __GHD_INSTANCE__: tab.instance || '',
+            __GHD_LINKEDIN_COMPANY__: tab.company === true,
+            GhdWidget: tab.widget
           };
           page.globalThis = page;
           const context = vm.createContext(page);
+
+          if (tab.copyLive === 'alive') {
+            vm.runInContext(
+              'globalThis.__GHD_COPY_LIVE__ = function () { try { return Boolean(chrome.runtime && chrome.runtime.id); } catch (error) { return false; } };',
+              context
+            );
+          } else if (tab.copyLive === 'dead') {
+            vm.runInContext('globalThis.__GHD_COPY_LIVE__ = function () { return false; };', context);
+          }
+
           const result = vm.runInContext(`(${details.func.toString()})()`, context);
           return [{ result }];
         }
@@ -70,12 +86,21 @@ function loadBackground(tabs) {
 
         if (details.files.includes('lib/widget.js')) {
           tab.runtimeId = 'ghost-job-detector';
+          tab.instance = 'live-widget';
+          tab.copyLive = 'alive';
+          tab.host = {
+            getAttribute(name) {
+              return name === 'data-ghd-instance' ? 'live-widget' : null;
+            }
+          };
           tab.widget = { analyze() {} };
         }
 
         if (details.files.includes('content/linkedin-company.js')) {
           tab.runtimeId = 'ghost-job-detector';
           tab.company = true;
+          tab.instance = 'live-company';
+          tab.copyLive = 'alive';
         }
 
         return [];
@@ -142,6 +167,13 @@ test('a tab that already has a healthy widget is not injected again', async () =
       id: 4,
       url: 'https://www.linkedin.com/jobs/search/?currentJobId=4476508048',
       runtimeId: 'ghost-job-detector',
+      instance: 'live-widget',
+      copyLive: 'alive',
+      host: {
+        getAttribute(name) {
+          return name === 'data-ghd-instance' ? 'live-widget' : null;
+        }
+      },
       widget: { analyze() {} },
       company: false,
       injected: []
@@ -150,6 +182,13 @@ test('a tab that already has a healthy widget is not injected again', async () =
       id: 5,
       url: 'https://argonne.wd1.myworkdayjobs.com/en-US/Argonne_Careers/job/Lemont-IL/Engineer_423470',
       runtimeId: 'ghost-job-detector',
+      instance: 'live-widget',
+      copyLive: 'alive',
+      host: {
+        getAttribute(name) {
+          return name === 'data-ghd-instance' ? 'live-widget' : null;
+        }
+      },
       widget: { analyze() {} },
       company: false,
       injected: []
@@ -158,6 +197,8 @@ test('a tab that already has a healthy widget is not injected again', async () =
       id: 6,
       url: 'https://www.linkedin.com/company/georgia-tech/',
       runtimeId: 'ghost-job-detector',
+      instance: 'live-company',
+      copyLive: 'alive',
       widget: undefined,
       company: true,
       injected: []
@@ -174,6 +215,59 @@ test('a tab that already has a healthy widget is not injected again', async () =
   assert.deepEqual(tabs[1].injected, []);
   assert.deepEqual(tabs[2].injected, []);
   assert.ok(page.calls.length >= 3);
+});
+
+test('leftover widget DOM does not skip injection', async () => {
+  const orphanHost = {
+    getAttribute(name) {
+      return name === 'data-ghd-instance' ? 'orphan' : null;
+    }
+  };
+  const tabs = [
+    {
+      id: 7,
+      url: 'https://www.linkedin.com/jobs/view/4475184050',
+      runtimeId: 'ghost-job-detector',
+      instance: 'orphan',
+      copyLive: 'dead',
+      host: orphanHost,
+      widget: { analyze() {} },
+      company: false,
+      injected: []
+    },
+    {
+      id: 8,
+      url: 'https://www.linkedin.com/jobs/view/4460918631',
+      runtimeId: 'ghost-job-detector',
+      instance: 'live-widget',
+      copyLive: 'alive',
+      host: {
+        getAttribute(name) {
+          return name === 'data-ghd-instance' ? 'someone-else' : null;
+        }
+      },
+      widget: { analyze() {} },
+      company: false,
+      injected: []
+    },
+    {
+      id: 9,
+      url: 'https://www.linkedin.com/jobs/search/?currentJobId=4445720940',
+      runtimeId: 'ghost-job-detector',
+      instance: '',
+      host: orphanHost,
+      widget: { analyze() {} },
+      company: false,
+      injected: []
+    }
+  ];
+  const page = loadBackground(tabs);
+
+  await page.sandbox.injectOpenTabs();
+
+  assert.deepEqual(tabs[0].injected.map((files) => [...files]), [LINKEDIN_FILES]);
+  assert.deepEqual(tabs[1].injected.map((files) => [...files]), [LINKEDIN_FILES]);
+  assert.deepEqual(tabs[2].injected.map((files) => [...files]), [LINKEDIN_FILES]);
 });
 
 test('headcount, job page, and widget ignore a second injection', () => {

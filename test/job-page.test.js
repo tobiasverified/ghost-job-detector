@@ -804,9 +804,16 @@ test('a second widget injection keeps the open panel instead of stacking another
       style: {},
       textContent: '',
       innerHTML: '',
+      attrs: {},
       isConnected: false,
       children: [],
       shadow: null,
+      setAttribute(name, value) {
+        element.attrs[name] = String(value);
+      },
+      getAttribute(name) {
+        return element.attrs[name] || null;
+      },
       append(...nodes) {
         element.children.push(...nodes);
       },

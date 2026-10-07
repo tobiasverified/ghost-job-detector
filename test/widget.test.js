@@ -39,8 +39,15 @@ function loadWidget({ holdPay = false, sendError = null, trackTeardown = false }
   };
   const host = {
     style: {},
+    attrs: {},
     isConnected: false,
     removals: 0,
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+    getAttribute(name) {
+      return this.attrs[name] || null;
+    },
     attachShadow() {
       return shadow;
     },
@@ -79,7 +86,16 @@ function loadWidget({ holdPay = false, sendError = null, trackTeardown = false }
       createElement(tag) {
         return tag === 'div' && !host.isConnected && !host.created
           ? Object.assign(host, { created: true })
-          : { tag, className: '', textContent: '', style: {} };
+          : {
+            tag,
+            className: '',
+            textContent: '',
+            style: {},
+            setAttribute() {},
+            getAttribute() {
+              return null;
+            }
+          };
       },
       documentElement: {
         appendChild(node) {
@@ -87,7 +103,15 @@ function loadWidget({ holdPay = false, sendError = null, trackTeardown = false }
         }
       },
       querySelectorAll(selector) {
-        if (trackTeardown && selector === '#ghd-widget-host' && host.isConnected) {
+        if (!host.isConnected) {
+          return [];
+        }
+
+        const text = String(selector);
+        const owned = host.getAttribute('data-ghd-instance');
+        const ownInstance = owned && text.includes(`[data-ghd-instance="${owned}"]`);
+
+        if (ownInstance || (trackTeardown && (text === '#ghd-widget-host' || text.includes('#ghd-widget-host')))) {
           return [host];
         }
 

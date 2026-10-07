@@ -1,11 +1,40 @@
 (() => {
   'use strict';
 
-  if (globalThis.__GHD_WORKDAY__) {
+  function freshInstanceId() {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.replace(/[^a-z0-9]/gi, '');
+  }
+
+  function workdayCopyIsLive() {
+    try {
+      return typeof globalThis.__GHD_WORKDAY_LIVE__ === 'function' && globalThis.__GHD_WORKDAY_LIVE__() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  if (globalThis.__GHD_WORKDAY__ && workdayCopyIsLive()) {
     return;
   }
 
+  const INSTANCE_ID = globalThis.__GHD_INSTANCE__ || freshInstanceId();
+
+  if (!globalThis.__GHD_INSTANCE__) {
+    globalThis.__GHD_INSTANCE__ = INSTANCE_ID;
+  }
+
   globalThis.__GHD_WORKDAY__ = true;
+  globalThis.__GHD_WORKDAY_LIVE__ = function workdayCopyStillLive() {
+    try {
+      return Boolean(chrome.runtime?.id) && globalThis.__GHD_INSTANCE__ === INSTANCE_ID;
+    } catch {
+      return false;
+    }
+  };
+
+  if (typeof globalThis.__GHD_COPY_LIVE__ !== 'function') {
+    globalThis.__GHD_COPY_LIVE__ = globalThis.__GHD_WORKDAY_LIVE__;
+  }
 
   const STORAGE_KEY = 'ghd_current_job';
   const platform = 'WORKDAY';
@@ -125,16 +154,34 @@
     }
   }
 
-  function removeNodes(selector) {
-    let nodes = [];
-
-    try {
-      nodes = document.querySelectorAll(selector);
-    } catch {
-      return;
+  function stamp(node) {
+    if (typeof node?.setAttribute === 'function') {
+      node.setAttribute('data-ghd-instance', INSTANCE_ID);
     }
+  }
 
-    for (const node of nodes) {
+  function nodesFor(selector) {
+    try {
+      return document.querySelectorAll(selector);
+    } catch {
+      return [];
+    }
+  }
+
+  function sweepForeignElements() {
+    for (const node of nodesFor('#ghd-widget-host, .ghd-badge, style[data-ghd-instance], [data-ghd-instance]')) {
+      if (node.getAttribute?.('data-ghd-instance') !== INSTANCE_ID) {
+        try {
+          node.remove();
+        } catch {
+          // Already detached.
+        }
+      }
+    }
+  }
+
+  function removeOwnElements() {
+    for (const node of nodesFor(`[data-ghd-instance="${INSTANCE_ID}"]`)) {
       try {
         node.remove();
       } catch {
@@ -151,8 +198,7 @@
     contextTornDown = true;
 
     try {
-      removeNodes('#ghd-widget-host');
-      removeNodes('.ghd-badge');
+      removeOwnElements();
     } catch {
       // Removal is best-effort.
     }
@@ -650,6 +696,7 @@
 
       const badge = document.createElement('button');
       badge.className = 'ghd-badge';
+      stamp(badge);
       badge.type = 'button';
       badge.title = 'Save this job for Ghost Job Detector';
       badge.style.cssText = [
@@ -742,6 +789,7 @@
     }
   }, 500);
 
+  sweepForeignElements();
   watchExtensionContext();
   processPage();
 })();

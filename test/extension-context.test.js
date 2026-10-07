@@ -13,32 +13,69 @@ function loadScripts() {
   const observerInstances = [];
   const host = {
     id: 'ghd-widget-host',
+    className: '',
+    attrs: {},
     removed: false,
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+    getAttribute(name) {
+      return this.attrs[name] || null;
+    },
     remove() {
       this.removed = true;
     }
   };
   const badge = {
+    id: '',
     className: 'ghd-badge',
+    attrs: {},
     removed: false,
+    setAttribute(name, value) {
+      this.attrs[name] = String(value);
+    },
+    getAttribute(name) {
+      return this.attrs[name] || null;
+    },
     remove() {
       this.removed = true;
     }
   };
 
+  function selectorMatches(node, selector) {
+    return String(selector).split(',').some((part) => {
+      const text = part.trim();
+
+      if (text === '#ghd-widget-host') {
+        return node.id === 'ghd-widget-host';
+      }
+
+      if (text === '.ghd-badge') {
+        return String(node.className).split(/\s+/).includes('ghd-badge');
+      }
+
+      if (text === '[data-ghd-instance]' || text === 'style[data-ghd-instance]') {
+        return Boolean(node.getAttribute('data-ghd-instance'));
+      }
+
+      if (text.startsWith('[data-ghd-instance="') && text.endsWith('"]')) {
+        return node.getAttribute('data-ghd-instance') === text.slice('[data-ghd-instance="'.length, -2);
+      }
+
+      return false;
+    });
+  }
+
   function querySelectorAll(selector) {
-    const found = [];
-    const text = String(selector);
+    const instance = sandbox.__GHD_INSTANCE__;
 
-    if ((text === '#ghd-widget-host' || text.includes('#ghd-widget-host')) && !host.removed) {
-      found.push(host);
+    for (const node of [host, badge]) {
+      if (instance && !node.getAttribute('data-ghd-instance')) {
+        node.setAttribute('data-ghd-instance', instance);
+      }
     }
 
-    if ((text === '.ghd-badge' || text.includes('.ghd-badge')) && !badge.removed) {
-      found.push(badge);
-    }
-
-    return found;
+    return [host, badge].filter((node) => !node.removed && selectorMatches(node, selector));
   }
 
   class ShadowRoot {}

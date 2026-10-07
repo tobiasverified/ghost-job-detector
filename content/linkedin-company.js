@@ -1,11 +1,55 @@
 (() => {
   'use strict';
 
-  if (globalThis.__GHD_LINKEDIN_COMPANY__) {
+  function freshInstanceId() {
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`.replace(/[^a-z0-9]/gi, '');
+  }
+
+  function companyCopyIsLive() {
+    try {
+      return typeof globalThis.__GHD_COMPANY_LIVE__ === 'function' && globalThis.__GHD_COMPANY_LIVE__() === true;
+    } catch {
+      return false;
+    }
+  }
+
+  if (globalThis.__GHD_LINKEDIN_COMPANY__ && companyCopyIsLive()) {
     return;
   }
 
+  const INSTANCE_ID = freshInstanceId();
+  globalThis.__GHD_INSTANCE__ = INSTANCE_ID;
   globalThis.__GHD_LINKEDIN_COMPANY__ = true;
+  globalThis.__GHD_COMPANY_LIVE__ = function companyCopyStillLive() {
+    try {
+      return Boolean(chrome.runtime?.id) && globalThis.__GHD_INSTANCE__ === INSTANCE_ID;
+    } catch {
+      return false;
+    }
+  };
+  globalThis.__GHD_COPY_LIVE__ = globalThis.__GHD_COMPANY_LIVE__;
+
+  function sweepForeignElements() {
+    let nodes = [];
+
+    try {
+      nodes = document.querySelectorAll('#ghd-widget-host, .ghd-badge, style[data-ghd-instance], [data-ghd-instance]');
+    } catch {
+      return;
+    }
+
+    for (const node of nodes) {
+      if (node.getAttribute?.('data-ghd-instance') !== INSTANCE_ID) {
+        try {
+          node.remove();
+        } catch {
+          // Already detached.
+        }
+      }
+    }
+  }
+
+  sweepForeignElements();
 
   const headcount = globalThis.GhdHeadcount;
   let storedMarker = '';
@@ -67,7 +111,7 @@
     observer = null;
 
     try {
-      document.querySelectorAll('#ghd-widget-host, .ghd-badge').forEach((node) => {
+      document.querySelectorAll(`[data-ghd-instance="${INSTANCE_ID}"]`).forEach((node) => {
         try {
           node.remove();
         } catch {

@@ -69,19 +69,34 @@ const OPEN_TAB_URLS = [
   '*://linkedin.com/company/*'
 ];
 
-// Runs in the tab. A reload leaves the old copy with no runtime id, so that
-// tab is injected again. A live copy already has the widget or the company script.
+// Runs in the tab. A reload leaves the old copy's chrome dead, so that tab is
+// injected again. A live job page also has a widget host stamped with this
+// copy's instance. Leftover DOM from an orphaned copy is not enough.
 function extensionCopyIsHealthy() {
   try {
     if (!chrome.runtime?.id) {
       return false;
     }
 
-    if (typeof globalThis.GhdWidget?.analyze === 'function') {
+    let copyLive = false;
+
+    try {
+      copyLive = typeof globalThis.__GHD_COPY_LIVE__ === 'function' && globalThis.__GHD_COPY_LIVE__() === true;
+    } catch {
+      copyLive = false;
+    }
+
+    if (!copyLive) {
+      return false;
+    }
+
+    if (globalThis.__GHD_LINKEDIN_COMPANY__ === true) {
       return true;
     }
 
-    return globalThis.__GHD_LINKEDIN_COMPANY__ === true;
+    const instance = globalThis.__GHD_INSTANCE__;
+    const host = document.getElementById('ghd-widget-host');
+    return Boolean(instance) && host?.getAttribute?.('data-ghd-instance') === instance;
   } catch {
     return false;
   }
