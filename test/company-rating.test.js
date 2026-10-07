@@ -101,9 +101,9 @@ test('a ratings response returns the overall score and caches it for a day', asy
   });
   assert.equal(calls.filter((call) => call.url.includes('rapidapi.com')).length, 1);
 
-  const stored = await cache.get('glassdoor_rating_v5_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
+  const stored = await cache.get('glassdoor_rating_v6_google', new Date(NOW.getTime() + (23 * 60 * 60 * 1000)));
   assert.equal(stored.ratings.overall, 3.849);
-  assert.equal(await cache.get('glassdoor_rating_v5_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
+  assert.equal(await cache.get('glassdoor_rating_v6_google', new Date(NOW.getTime() + (25 * 60 * 60 * 1000))), null);
 });
 
 test('parseEmployeeSize reads Glassdoor size buckets', () => {
@@ -169,7 +169,7 @@ test('403 stays unavailable and 429 is quota with no retry', async () => {
 
     assert.deepEqual(rating, { overall: null, error });
     assert.equal(calls, 1);
-    assert.equal(await cache.get('glassdoor_rating_v5_acme', NOW), null);
+    assert.equal(await cache.get('glassdoor_rating_v6_acme', NOW), null);
   }
 });
 
@@ -262,7 +262,7 @@ test('both the full name and the shorter alias missing returns not_found', async
 
   assert.equal(glassdoorCalls, 2);
   assert.deepEqual(rating, { overall: null, error: 'not_found' });
-  assert.equal(await cache.get('glassdoor_rating_v5_amli residential', NOW), null);
+  assert.equal(await cache.get('glassdoor_rating_v6_amli residential', NOW), null);
 });
 
 test('a missing key or a thrown request returns unavailable', async () => {
@@ -1217,4 +1217,91 @@ test('trailing country and legal words are stripped for lookup, and the posted n
   assert.equal(calls.some((href) => /company=Baker\+Tilly\+US(?:&|$)/.test(href)), false);
   assert.equal(rating.overall, 3.6);
   assert.equal(rating.reviewCount, 2485);
+});
+
+test('Georgia Tech is accepted only as an exact Wikidata alias', async () => {
+  assert.equal(glassdoorEntityMatches('Georgia Institute of Technology', 'Georgia Tech'), false);
+  assert.equal(glassdoorEntityMatches('Harrison Clarke', 'Clarke'), false);
+  assert.equal(glassdoorEntityMatches('Ford', 'Ford Motor Company'), true);
+  assert.equal(glassdoorEntityMatches('Intel', 'Intel'), true);
+  assert.equal(glassdoorEntityMatches('TKO Group Holdings', 'TKo Hospitality'), false);
+  assert.equal(glassdoorEntityMatches('TKO Group Holdings', 'TKO'), true);
+  assert.equal(glassdoorEntityMatches('Amazon Web Services (AWS)', 'Amazon Web Services'), true);
+  assert.equal(glassdoorEntityMatches('Amazon Web Services (AWS)', 'Amazon'), false);
+  assert.equal(glassdoorEntityMatches('Baker Tilly US', 'Baker Tilly'), true);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne National Laboratory'), true);
+  assert.equal(glassdoorEntityMatches('Argonne National Laboratory', 'Argonne'), false);
+
+  function wikidataFetch(calls, entityName, { label, aliases }) {
+    return async (url) => {
+      const href = String(url);
+      calls.push(href);
+
+      if (href.includes('wbsearchentities')) {
+        return jsonResponse(200, { search: [{ id: 'Q1', label }] });
+      }
+
+      if (href.includes('wikidata.org')) {
+        return jsonResponse(200, {
+          entities: {
+            Q1: {
+              labels: { en: { value: label } },
+              aliases: { en: aliases.map((value) => ({ value })) },
+              claims: { P1128: [{ rank: 'normal', mainsnak: { datavalue: { value: { amount: '+8000' } } } }] }
+            }
+          }
+        });
+      }
+
+      return jsonResponse(200, {
+        name: entityName,
+        id: '33375',
+        website: 'https://www.gatech.edu',
+        ratings: { overall: 4.4 },
+        size: '5001 to 10000 Employees',
+        counts: { reviews: 4711, open_jobs: 316 }
+      });
+    };
+  }
+
+  const acceptedCalls = [];
+  const accepted = await lookupCompanyRating('Georgia Institute of Technology', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: wikidataFetch(acceptedCalls, 'Georgia Tech', {
+      label: 'Georgia Institute of Technology',
+      aliases: ['Georgia Tech']
+    })
+  });
+  assert.equal(accepted.overall, 4.4);
+  assert.equal(accepted.reviewCount, 4711);
+  assert.equal(acceptedCalls.filter((href) => href.includes('wikidata.org')).length, 2);
+  assert.equal(acceptedCalls.filter((href) => href.includes('companies/details')).length, 1);
+
+  const researchCalls = [];
+  const research = await lookupCompanyRating('Georgia Institute of Technology', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: wikidataFetch(researchCalls, 'Georgia Tech Research Institute', {
+      label: 'Georgia Institute of Technology',
+      aliases: ['Georgia Tech']
+    })
+  });
+  assert.equal(research.overall, null);
+  assert.equal(researchCalls.filter((href) => href.includes('wikidata.org')).length, 2);
+
+  const clarkeCalls = [];
+  const clarke = await lookupCompanyRating('Harrison Clarke', {
+    now: NOW,
+    cache: new MemoryCache(),
+    env: { RAPIDAPI_KEY: SECRET },
+    fetch: wikidataFetch(clarkeCalls, 'Clarke', {
+      label: 'Harrison Clarke',
+      aliases: ['Harrison Clarke International']
+    })
+  });
+  assert.equal(clarke.overall, null);
+  assert.equal(clarkeCalls.filter((href) => href.includes('wikidata.org')).length, 2);
 });
