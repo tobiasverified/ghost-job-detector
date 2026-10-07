@@ -41,9 +41,15 @@ test('job card badges draw the same inline ghost on the purple circle', () => {
   assert.equal(manifest.includes('web_accessible_resources'), false);
 });
 
-test('the widget title is text only', () => {
-  assert.equal(widget.includes('GHOST_BODY'), false);
-  assert.equal(widget.includes('ghostSvg'), false);
-  assert.equal(widget.includes('titleBar'), false);
-  assert.equal(widget.split('<div class="bar"><span class="title">Ghost Job Detector</span></div>').length - 1, 4);
+test('the widget title uses the same ghost without a circle', () => {
+  assert.equal(ghostBody(widget), ghostBody(linkedin));
+  assert.equal(widget.includes('👻'), false);
+  assert.equal(widget.includes('data:image'), false);
+  assert.equal(widget.includes('fill="#ffffff"'), true);
+  assert.equal(widget.includes('cx="9"'), true);
+  assert.equal(widget.includes('cx="15"'), true);
+  const ghostMarkup = widget.slice(widget.indexOf('function ghostSvg'), widget.indexOf('function titleBar'));
+  assert.equal(ghostMarkup.includes('stroke'), false);
+  assert.equal(widget.includes('ghostSvg(16)'), true);
+  assert.equal(widget.split('${titleBar()}').length - 1, 4);
 });
