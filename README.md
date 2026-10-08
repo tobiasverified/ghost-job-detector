@@ -55,7 +55,7 @@ This extension is not on the Chrome Web Store. Chromium browsers can load it unp
 3. Turn on Developer mode.
 4. Choose Load unpacked and select this folder.
 
-## If Self-hosting
+## Self-hosting
 
 Create a Supabase project. In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql), then each dated file in this order:
 
