@@ -1,0 +1,30 @@
+{
+  "job_title": { "id": 88011, "name": "Software Engineer" },
+  "location": { "id": "CITY-441", "name": "North Harbor, OR", "type": "city" },
+  "pay_period": "annual",
+  "currency": "USD",
+  "base_pay": {
+    "p10": 72000.5,
+    "p25": 98000.25,
+    "p50": 141500.4,
+    "p75": 168000.75,
+    "p90": 189000.1
+  },
+  "additional_pay": {
+    "p10": 4100.2,
+    "p25": 8600.4,
+    "p50": 15200.6,
+    "p75": 24100.8,
+    "p90": 33800.1
+  },
+  "total_pay": {
+    "p10": 76100.7,
+    "p25": 106600.65,
+    "p50": 156701,
+    "p75": 192101.55,
+    "p90": 222800.2
+  },
+  "salaries_count": 1840,
+  "confidence": "confident",
+  "updated_on": "2026-01-15"
+}

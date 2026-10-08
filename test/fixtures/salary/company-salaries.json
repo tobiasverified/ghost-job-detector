@@ -1,0 +1,51 @@
+{
+  "pagination": { "page": 1, "items_per_page": 20, "total_pages": 12, "total_count": 240 },
+  "location": { "id": "LAND-7", "name": "Exampleland", "type": "country" },
+  "salaries": [
+    {
+      "job_title": { "id": 88011, "name": "Software Engineer" },
+      "salaries_count": 640,
+      "pay_period": "annual",
+      "currency": "USD",
+      "base_pay": { "p10": 121000.2, "p25": 146500.4, "p50": 172400.12, "p75": 198200.6, "p90": 221100.8 },
+      "additional_pay": { "p10": 18400.1, "p25": 27600.3, "p50": 41200.5, "p75": 63800.7, "p90": 87400.9 },
+      "total_pay": { "p10": 139400.3, "p25": 174100.7, "p50": 261000.5, "p75": 320000.1, "p90": 388000.4 }
+    },
+    {
+      "job_title": { "id": 88012, "name": "Senior Software Engineer" },
+      "salaries_count": 210,
+      "pay_period": "annual",
+      "currency": "USD",
+      "base_pay": { "p10": 168400.2, "p25": 189700.5, "p50": 210800.33, "p75": 236400.6, "p90": 259900.8 },
+      "additional_pay": { "p10": 22100.4, "p25": 34800.6, "p50": 51200.8, "p75": 77600.1, "p90": 98400.3 },
+      "total_pay": { "p10": 190500.6, "p25": 224500.1, "p50": 301100.4, "p75": 364000.7, "p90": 428300.1 }
+    },
+    {
+      "job_title": { "id": 88013, "name": "Harbor Coordinator" },
+      "salaries_count": 96,
+      "pay_period": "annual",
+      "currency": "USD",
+      "base_pay": { "p10": 88000.1, "p25": 104200.3, "p50": 126600.5, "p75": 149800.7, "p90": 171400.9 },
+      "additional_pay": { "p10": 6200.2, "p25": 9400.4, "p50": 14100.6, "p75": 20800.8, "p90": 27600.1 },
+      "total_pay": { "p10": 94200.3, "p25": 113600.7, "p50": 140701.1, "p75": 170601.5, "p90": 199001 }
+    },
+    {
+      "job_title": { "id": 88014, "name": "Signal Planner" },
+      "salaries_count": 84,
+      "pay_period": "annual",
+      "currency": "USD",
+      "base_pay": { "p10": 99000.2, "p25": 118400.4, "p50": 142700.6, "p75": 169300.8, "p90": 193500.1 },
+      "additional_pay": { "p10": 8100.3, "p25": 12600.5, "p50": 19400.7, "p75": 28100.9, "p90": 36200.2 },
+      "total_pay": { "p10": 107100.5, "p25": 131000.9, "p50": 162101.3, "p75": 197401.7, "p90": 229701.3 }
+    },
+    {
+      "job_title": { "id": 88015, "name": "Launch Steward" },
+      "salaries_count": 41,
+      "pay_period": "annual",
+      "currency": "USD",
+      "base_pay": { "p10": 112200.4, "p25": 131800.6, "p50": 156400.8, "p75": 181900.1, "p90": 206300.3 },
+      "additional_pay": { "p10": 9700.5, "p25": 15400.7, "p50": 22800.9, "p75": 33100.2, "p90": 44600.4 },
+      "total_pay": { "p10": 121900.9, "p25": 147201.3, "p50": 179201.7, "p75": 215001.3, "p90": 250901.7 }
+    }
+  ]
+}
