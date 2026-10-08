@@ -1,99 +1,59 @@
 # Ghost Job Detector
 
-Chrome extension that flags possible ghost job postings on LinkedIn and Workday. Layoff and review lookups run on a small Vercel backend so API keys stay off the extension.
+A Chromium extension that scores a LinkedIn or Workday posting for signs it may be a ghost job.
 
-The score is a heuristic. It is not proof that a listing is fake.
+Unofficial: not affiliated with LinkedIn, Workday, Glassdoor or any data provider. The score is a heuristic, not proof a posting is fake.
 
-## What the score uses
+## Demo
 
-| Signal | Points | Source |
+<VIDEO_URL>
+
+A silent 21-second clip of one check.
+
+## What a check shows
+
+The card stays on the posting. Scoring runs only after you press **Run full check**. On some pages, before that click, the extension may send a company name and a description excerpt so the backend can resolve the employer. That step is described in [PRIVACY.md](PRIVACY.md).
+
+The score adds four rows, then stops at 100. `lib/server/score.js` labels the total:
+
+| Total | Label |
+| --- | --- |
+| 0–34 | Ghost Job: Not detected |
+| 35–49 | Ghost Job: Possible |
+| 50–100 | Ghost Job: Likely |
+
+When the check has none of a rating with at least 5 reviews, a company size, a confirmed repost, or an accepted layoff, the card says **Not enough data to score** and does not show a number.
+
+| Row | What it is | Points added |
 | --- | --- | --- |
-| Vague description | 0-30 | On the server, from the posting text |
-| Layoff coverage in the past year | 15-25 | NewsData.io, then DuckDuckGo if NewsData errors or has no matching article |
-| Low public rating | 0-15 | Glassdoor snippet, then Indeed or SimplyHired |
-| Many open jobs vs employees | 0-15 | Counted in the page when both numbers are visible |
-| Reposts of the same role | 0 or 15 | Another LinkedIn posting of the same title, company, and city adds 15 |
+| Description Clarity | How specific the posting text is. A description under 50 characters scores 30. Longer text is scored for length, missing pay, question marks, buzzwords, and missing specifics, then capped. | 0–30 |
+| Recent Layoffs | A layoff report for this employer from layoffs.fyi, NewsData, or DuckDuckGo, dated within the past year. Within 180 days scores 25. Older than that, and still inside the year, scores 15. | 0, 15, or 25 |
+| Company Reviews | A public employer rating. 3.0 or lower scores 15, above 3 through 3.5 scores 10, above 3.5 through 3.8 scores 4, and above 3.8 scores 0. Fewer than 5 reviews scores 0. | 0, 4, 10, or 15 |
+| Company size | The size shown for the employer. A hiring ratio from 0 to 25 is calculated for that line and is not added to the total. | none |
+| Reposts | Another public posting of the role. An identical title scores 40, any other kept match scores 15, and a public Greenhouse, Lever, or Ashby posting older than 7 days scores 25. The row is capped at 40. | 0–40 |
 
-0-34 is Not detected, 35-49 is Possible, and 50 or higher is Likely.
+## Supported sites
 
-Subsidiary names are searched as well as the full company name. A Hyundai Supernal posting is also checked as Supernal, so a Hyundai Motor layoff article is not treated as a Supernal layoff.
+The extension reads LinkedIn job pages and Workday (`*.myworkdayjobs.com`) today.
 
-NewsData's latest endpoint only covers recent articles. Older layoff reports come from the DuckDuckGo fallback. Ratings are parsed from public search snippets and can be missing or stale.
+Planned, no date: Indeed, Greenhouse, Ashby and others.
 
-Job analyses are cached for 7 days. Company reviews are cached for 30 days. Each IP is limited to 50 requests per hour across both endpoints.
+## Getting access
 
-## Extension
+The hosted backend is invite-only.
 
-1. Open `chrome://extensions`.
-2. Turn on Developer mode.
-3. Choose "Load unpacked" and select this folder.
-4. Open a LinkedIn job, a LinkedIn search result, or a `*.myworkdayjobs.com` posting.
-5. Open the extension popup.
+Request an invite: <FORM_URL>
 
-Search pages show a ghost badge on each job card, including cards that load as you scroll. Select a result before opening the popup. The badge saves that card; the popup prefers the detail pane when LinkedIn has loaded it.
+The form asks for a name, email, and optional GitHub username. You receive a key by email. Open the extension popup, open Advanced, paste the key, and click **Save key**. The key stays on your computer and is sent only to the backend.
 
-"View Evidence" explains the score for the current posting. "How This Works" explains the signals and stores the backend URL. The repost button opens a duplicate listing when one was found. The review button opens the rating page, or DuckDuckGo when the backend has no page.
+## Install
 
-The extension sends title, company, description, URL, and platform. It does not contain the NewsData or Supabase keys.
+This extension is not on the Chrome Web Store. Chromium browsers can load it unpacked. It has been tested on Brave.
 
-## Backend setup
-
-Create a [NewsData.io](https://newsdata.io/) key and a [Supabase](https://supabase.com/) project. In the Supabase SQL editor, run [`supabase/schema.sql`](supabase/schema.sql). Row level security is enabled and no anon policies are added, so only the service role key can read the cache.
-
-From this folder:
-
-```bash
-npm install -g vercel
-vercel
-vercel env add NEWSDATA_API_KEY
-vercel env add SUPABASE_URL
-vercel env add SUPABASE_SERVICE_ROLE_KEY
-vercel env add RATE_LIMIT_PER_HOUR
-vercel env add RAPIDAPI_KEY
-vercel --prod
-```
-
-Use the Supabase project URL (`https://YOUR_PROJECT.supabase.co`) and the service role key. Set `RATE_LIMIT_PER_HOUR` to `50`. Copy the same names into `.env` if you use `vercel dev`. See [`.env.example`](.env.example).
-
-The extension calls `https://ghost-job-detector-nine.vercel.app` unless a different backend URL is saved under "How This Works". The manifest allows `https://*.vercel.app` and localhost for `vercel dev`.
-
-### Endpoints
-
-`POST /api/analyze-job`
-
-```json
-{ "title": "AI Engineer", "company": "Hyundai Supernal", "description": "...", "url": "https://...", "platform": "LINKEDIN" }
-```
-
-Returns `ghostScore` and `factors` for `reposts`, `layoffs`, `reviews`, `vagueness`, and `hiringRatio`. Layoffs can add 25, vagueness 30, hiring ratio 25, and reposts 15. A found rating can add up to 15 more, and the displayed score still caps at 100. Missing reviews add 0 and show "No public reviews found". Reposts add 20 when a public Greenhouse or Lever posting for the same title, company, and location was created more than 7 days ago. Otherwise two or more LinkedIn search matches add 15. No match, or a search that does not return, adds 0.
-
-Employee counts are tried in order: Crunchbase, the company website, a search snippet, then Apollo. Each attempt is capped at 30 seconds, and the whole chain stops after about 8 seconds so enrichment can finish in under 10 seconds. A 402, 403, or 429 from Crunchbase or Apollo is treated as quota exhaustion and the next source is used. Results cache for 24 hours. The popup labels the source, for example `~1,001-5,000 employees (estimated, Crunchbase)`.
-
-### Quotas
-
-| Source | Planned free-tier budget | Where the key lives |
-| --- | --- | --- |
-| Crunchbase | 10,000 organization lookups per month on the free key. Crunchbase can enforce a lower limit on a basic key; a 429 response falls through. | `CRUNCHBASE_API_KEY` in Vercel only |
-| Apollo | About 50 organization enrichments per month. Used only after Crunchbase, the company site, and search snippets miss. | `APOLLO_API_KEY` in Vercel only |
-| Company website and search snippets | No key. Public pages only. | None |
-| NewsData layoffs | Existing `NEWSDATA_API_KEY` quota | Vercel only |
-| Glassdoor ratings | 1,000 RapidAPI calls per month on the free plan, also capped at 1,000 per hour. Cached for 24 hours per company. | `RAPIDAPI_KEY` in Vercel only |
-
-The extension never receives these keys. Requests stay limited to 50 per IP per hour.
-
-`POST /api/company-reviews`
-
-```json
-{ "company": "Hyundai Supernal" }
-```
-
-Accepts DuckDuckGo HTML in `clientHtml` from one `"company name" reviews` search. Returns a parsed rating from any public snippet, or `{ "rating": null, "score": 0, "detail": "No public reviews found" }` when none is present. The extension caches that search for 24 hours.
-
-`GET /api/company-rating?company=Google`
-
-Calls the Glassdoor ratings API on RapidAPI and returns `{ "overall": 3.85, "source": "glassdoor", "cached": false }`. `company` may be a name, a Glassdoor employer id, or a company page URL. A cache hit within 24 hours returns the same object with `"cached": true`. A failed, blocked, or rate-limited upstream call returns `{ "overall": null, "error": "unavailable" }` and is not cached. The RapidAPI key stays in `RAPIDAPI_KEY` on Vercel.
-
-All three endpoints require header `X-GHD-Client: ghost-job-detector`. That header is not a secret. It stops ordinary web pages from spending the NewsData and RapidAPI quotas. Requests are also limited to 50 per IP per hour.
+1. Download the ZIP from GitHub, or clone this repository, and unzip it if needed.
+2. Open `chrome://extensions`.
+3. Turn on Developer mode.
+4. Choose Load unpacked and select this folder.
 
 ## Self-hosting
 
@@ -106,7 +66,11 @@ Create a Supabase project. In the SQL editor, run [`supabase/schema.sql`](supaba
 
 Those files enable row level security and add no anon policies. Table and function access is granted to `service_role` only. Use that key as `SUPABASE_SERVICE_ROLE_KEY`.
 
-Set the Vercel environment variables listed in [`.env.example`](.env.example). `vercel.json` calls `GET /api/cleanup` every day at 08:00 UTC. Set `CRON_SECRET` and send it as `Authorization: Bearer CRON_SECRET`; the route returns 401 until that secret is set.
+Set the server environment variables listed in [`.env.example`](.env.example). API keys stay there. The extension does not contain them. Each request must send the header `X-GHD-Client: ghost-job-detector`.
+
+The default limit is 300 requests per IP per hour. Set `RATE_LIMIT_PER_HOUR` to a positive number to override it. An empty value keeps 300.
+
+`vercel.json` calls `GET /api/cleanup` every day at 08:00 UTC. Set `CRON_SECRET` and send it as `Authorization: Bearer CRON_SECRET`. The route returns 401 until that secret is set.
 
 `REQUIRE_INVITE_KEY` is off unless it is the string `true`, so a self-hosted server accepts checks without an invite key. To issue one, set `INVITE_KEY_SECRET` and run:
 
@@ -116,7 +80,7 @@ node scripts/create-invite-key.mjs --label "a desk" --limit 40
 
 The script prints the key once and does not save it.
 
-To point the extension at your server, open the popup, turn on Developer mode, enter the server URL, choose Save, and approve the browser permission prompt.
+The manifest allows the exact hosted origin `https://ghost-job-detector-nine.vercel.app`, plus LinkedIn, Workday, DuckDuckGo, Wikidata, `http://localhost`, and `http://127.0.0.1`. To point the extension at another https server, open the popup, turn on Developer mode, enter the server URL, choose Save, and approve the permission prompt.
 
 ## Privacy
 
@@ -132,11 +96,8 @@ After an update, LinkedIn tabs that are already open are re-injected automatical
 npm test
 ```
 
-The tests cover Hyundai Supernal, Meta, and Amazon layoff matching, a company with no layoff coverage, review parsing, cache and rate-limit behavior, and a scan that the extension files do not embed API keys. They do not call NewsData or DuckDuckGo.
+The suite covers layoff matching, reviews, the score and the evidence gate, LinkedIn and Workday page extraction, reposts, workforce and headcount, company identity, vagueness, pay parsing, the widget and popup, reload and open-tab injection, rate limits, paid daily caps, invite keys, the request log, careers pages, and a scan that extension files do not embed API keys. Outbound calls are mocked. `npm test` makes no live API calls.
 
-## Not in this version
+## License
 
-- `/api/company-stats` for LinkedIn employee count vs open roles
-- Indeed, Greenhouse, Lever, and Ashby page extraction
-
-Those are the next places to extend support. LinkedIn and Workday are the pages the extension reads today.
+[MIT](LICENSE). Copyright 2026 Bias V.

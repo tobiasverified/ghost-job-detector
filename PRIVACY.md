@@ -8,7 +8,7 @@ Contact: ghostjobdetector@atomicmail.io
 
 ## Summary
 
-- There are no accounts, and we don't ask for your name, email, or login.
+- There are no accounts. The extension does not ask for your name, email, or login. The invite form under Waitlist form does.
 - We don't sell your data, and we don't use it for advertising, profiling, or analytics.
 - Job postings are sent to the backend only as needed to produce a check (details below).
 - Some data goes to third-party services that help produce the check. They are listed below.
@@ -59,8 +59,13 @@ We don't sell your data and we don't share it with anyone for their own purposes
 | Wikidata (Wikimedia Foundation) | A company name, or a short phrase taken from the posting, as a search | Your browser directly, and our backend |
 | DuckDuckGo | A search query of the job title, company, and city. If your browser cannot fetch it directly, the extension opens a hidden tab to the same address | Your browser directly |
 | layoffs.fyi, company career sites, public job boards | The company name or already-public page addresses | Our backend |
+| Formbricks (formbricks.com, hosted in Germany) | The name, email address, and optional GitHub username submitted on the invite form | The form |
 
 When your browser contacts Wikidata or DuckDuckGo directly, those services can see your IP address, as they would for any site you visit. These services have their own privacy policies.
+
+## Waitlist form
+
+The invite request form is run by Formbricks (formbricks.com), which hosts it in Germany. If you submit it, Formbricks collects the name and email address you enter, plus an optional GitHub username. We use that only to send you an invite key and to reply about the project. We don't sell or share it. We keep it until the beta ends or you ask us to delete it, whichever comes first. You can ask for deletion by emailing ghostjobdetector@atomicmail.io. Formbricks processes the data under its own privacy policy.
 
 ## Data kept on your computer
 
