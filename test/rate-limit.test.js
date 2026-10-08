@@ -1,8 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { hashIp } from '../lib/server/ip-hash.js';
 import { SupabaseRateLimiter } from '../lib/server/rateLimit.js';
 
-const ENV = { SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-test' };
+const ENV = {
+  SUPABASE_URL: 'https://example.supabase.co',
+  SUPABASE_SERVICE_ROLE_KEY: 'service-test',
+  IP_HASH_SECRET: 'ip-hash-test'
+};
+const IP = '203.0.113.9';
+const BUCKET = `${hashIp(IP, ENV)}|2026-10-05T12:00:00.000Z`;
 const NOW = new Date('2026-10-05T12:34:56Z');
 
 function response(status, body) {
@@ -18,13 +25,14 @@ test('the hourly bucket is consumed with one atomic RPC call', async () => {
     }
   });
 
-  const result = await limiter.consume('203.0.113.9', NOW);
+  const result = await limiter.consume(IP, NOW);
 
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, 'https://example.supabase.co/rest/v1/rpc/ghd_consume_rate_limit');
   assert.equal(calls[0].method, 'POST');
+  assert.equal(JSON.stringify(calls).includes(IP), false);
   assert.deepEqual(calls[0].body, {
-    p_bucket_key: '203.0.113.9|2026-10-05T12:00:00.000Z',
+    p_bucket_key: BUCKET,
     p_window_start: '2026-10-05T12:00:00.000Z'
   });
   assert.deepEqual(result, { allowed: true, count: 7, limit: 50, via: 'rpc' });

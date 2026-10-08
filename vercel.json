@@ -10,6 +10,10 @@
     "api/company-reviews.js": { "maxDuration": 10 },
     "api/job-reposts.js": { "maxDuration": 10 },
     "api/careers-check.js": { "maxDuration": 10 },
-    "api/pay-vs-market.js": { "maxDuration": 10 }
-  }
+    "api/pay-vs-market.js": { "maxDuration": 10 },
+    "api/cleanup.js": { "maxDuration": 10 }
+  },
+  "crons": [
+    { "path": "/api/cleanup", "schedule": "0 8 * * *" }
+  ]
 }
