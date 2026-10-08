@@ -4,7 +4,6 @@ import test from 'node:test';
 import {
   OPEN_A_JOB,
   READY_ON_PAGE,
-  apiBaseDecision,
   feedbackBody,
   feedbackMailto,
   formatExtensionVersion,
@@ -139,6 +138,8 @@ test('the popup explains the check and hides the backend until Advanced is opene
     [true, true, true, true]
   );
   assert.equal(advanced.includes('Backend URL'), true);
+  assert.equal(advanced.includes('Developer mode'), true);
+  assert.equal(advanced.includes('id="developerMode"'), true);
   assert.equal(advanced.includes('Job text will be sent to that server.'), true);
   assert.equal(advanced.includes('Reset to default'), true);
   assert.equal(html.indexOf('Backend URL') > html.indexOf('<summary>Advanced</summary>'), true);
@@ -158,13 +159,7 @@ test('the status line follows the active tab', () => {
   assert.equal(pageStatusText(''), OPEN_A_JOB);
 });
 
-test('a custom backend must be https, except localhost', () => {
+test('the version line is the manifest version', () => {
   assert.equal(formatExtensionVersion('1.1.10'), 'v1.1.10');
   assert.equal(formatExtensionVersion(''), '');
-  assert.deepEqual(apiBaseDecision('  https://example.com/ '), { action: 'save', value: 'https://example.com' });
-  assert.deepEqual(apiBaseDecision('http://localhost:3000/'), { action: 'save', value: 'http://localhost:3000' });
-  assert.deepEqual(apiBaseDecision('http://127.0.0.1:8787'), { action: 'save', value: 'http://127.0.0.1:8787' });
-  assert.equal(apiBaseDecision('http://example.com').action, 'reject');
-  assert.equal(apiBaseDecision('http://localhost.evil.com').action, 'reject');
-  assert.deepEqual(apiBaseDecision('   '), { action: 'clear', value: '' });
 });

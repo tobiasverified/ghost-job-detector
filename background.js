@@ -3,7 +3,7 @@
  * after LinkedIn or Workday client-side navigations.
  */
 
-importScripts('lib/page-fetch.js');
+importScripts('lib/page-fetch.js', 'lib/api-base.js');
 
 let currentJob = null;
 
@@ -561,6 +561,7 @@ async function loadAllowedText(url, options = {}) {
 }
 
 const API_BASE_KEY = 'ghd_api_base';
+const DEVELOPER_MODE_KEY = 'ghd_developer_mode';
 const DEFAULT_API_BASE = 'https://ghost-job-detector-nine.vercel.app';
 
 function storageAdapter() {
@@ -579,21 +580,16 @@ function storageAdapter() {
 }
 
 async function apiBase() {
-  const stored = await chrome.storage.local.get(API_BASE_KEY);
-  const text = String(stored[API_BASE_KEY] || '').trim().replace(/\/$/, '');
+  const stored = await chrome.storage.local.get([API_BASE_KEY, DEVELOPER_MODE_KEY]);
+  const api = self.GhdApiBase;
 
-  try {
-    const url = new URL(text);
-    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-
-    if (url.protocol === 'https:' || (url.protocol === 'http:' && local)) {
-      return url.origin;
-    }
-  } catch {
+  if (!api) {
     return DEFAULT_API_BASE;
   }
 
-  return DEFAULT_API_BASE;
+  return api.resolveStoredApiBase(stored[API_BASE_KEY], {
+    developerMode: stored[DEVELOPER_MODE_KEY] === true
+  });
 }
 
 async function cachedSearchHtml(query, key, ttlMs) {

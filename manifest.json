@@ -14,13 +14,16 @@
     "*://*.linkedin.com/*",
     "*://linkedin.com/*",
     "*://*.myworkdayjobs.com/*",
-    "https://*.vercel.app/*",
+    "https://ghost-job-detector-nine.vercel.app/*",
     "https://html.duckduckgo.com/*",
     "https://duckduckgo.com/*",
     "https://lite.duckduckgo.com/*",
     "https://www.wikidata.org/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
   ],
   "content_scripts": [
     {

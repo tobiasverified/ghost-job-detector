@@ -1,7 +1,16 @@
 import { GITHUB_URL, PRIVACY_URL, SUPPORT_EMAIL } from './config.js';
 
-const API_BASE_KEY = 'ghd_api_base';
 const STORAGE_VERSION = '1.1.10';
+
+function apiBaseApi() {
+  const api = globalThis.GhdApiBase;
+
+  if (!api) {
+    throw new Error('Backend URL checker is not loaded.');
+  }
+
+  return api;
+}
 
 function filled(value) {
   return String(value || '').trim();
@@ -100,32 +109,8 @@ export function formatExtensionVersion(version) {
   return text ? `v${text}` : '';
 }
 
-export function normalizeApiBase(value) {
-  return String(value || '').trim().replace(/\/$/, '');
-}
-
-export function isAllowedApiBase(value) {
-  try {
-    const url = new URL(value);
-    const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-    return url.protocol === 'https:' || (url.protocol === 'http:' && local);
-  } catch {
-    return false;
-  }
-}
-
-export function apiBaseDecision(value) {
-  const next = normalizeApiBase(value);
-
-  if (!next) {
-    return { action: 'clear', value: '' };
-  }
-
-  if (!isAllowedApiBase(next)) {
-    return { action: 'reject', value: next };
-  }
-
-  return { action: 'save', value: next };
+export function apiBaseDecision(value, options) {
+  return apiBaseApi().apiBaseDecision(value, options);
 }
 
 if (typeof document !== 'undefined') {
@@ -141,8 +126,15 @@ async function migrateStorage() {
 
   const next = { ghd_storage_version: STORAGE_VERSION };
 
-  if (stored[API_BASE_KEY]) {
-    next[API_BASE_KEY] = stored[API_BASE_KEY];
+  const apiBaseKey = apiBaseApi().API_BASE_KEY;
+  const developerModeKey = apiBaseApi().DEVELOPER_MODE_KEY;
+
+  if (stored[apiBaseKey]) {
+    next[apiBaseKey] = stored[apiBaseKey];
+  }
+
+  if (stored[developerModeKey] === true) {
+    next[developerModeKey] = true;
   }
 
   if (stored.ghd_widget_pos) {
@@ -168,14 +160,34 @@ async function activeTabUrl() {
   }
 }
 
+function storagePort() {
+  return {
+    async set(values) {
+      await chrome.storage.local.set(values);
+    },
+    async remove(key) {
+      await chrome.storage.local.remove(key);
+    }
+  };
+}
+
 async function init() {
   await migrateStorage();
+  const api = apiBaseApi();
   const input = document.getElementById('apiBaseInput');
   const status = document.getElementById('apiBaseStatus');
-  const stored = await chrome.storage.local.get(API_BASE_KEY);
-  input.value = stored[API_BASE_KEY] || '';
+  const developerMode = document.getElementById('developerMode');
+  const stored = await chrome.storage.local.get([api.API_BASE_KEY, api.DEVELOPER_MODE_KEY]);
+  input.value = stored[api.API_BASE_KEY] || '';
+  developerMode.checked = stored[api.DEVELOPER_MODE_KEY] === true;
   document.getElementById('extensionVersion').textContent = formatExtensionVersion(extensionVersion());
   document.getElementById('pageStatus').textContent = pageStatusText(await activeTabUrl());
+
+  const storedOrigin = api.acceptedApiOrigin(input.value, { developerMode: developerMode.checked });
+
+  if (input.value && !storedOrigin) {
+    status.textContent = api.apiBaseDecision(input.value, { developerMode: developerMode.checked }).message;
+  }
 
   renderPopupLinks(document.getElementById('popupLinks'), {
     supportEmail: SUPPORT_EMAIL,
@@ -185,20 +197,36 @@ async function init() {
   });
 
   document.getElementById('saveApiBase').addEventListener('click', async () => {
-    const decision = apiBaseDecision(input.value);
+    const previousStored = await chrome.storage.local.get(api.API_BASE_KEY);
+    const previous = api.acceptedApiOrigin(previousStored[api.API_BASE_KEY], { developerMode: true });
+    const result = await api.applyApiBaseChoice(input.value, {
+      developerMode: developerMode.checked,
+      storage: storagePort(),
+      requestPermission(permission) {
+        return chrome.permissions.request(permission);
+      }
+    });
 
-    if (decision.action === 'reject') {
-      status.textContent = 'Use an https URL, or http://localhost for local development.';
-      return;
+    if ((result.saved || result.requested) && previous && previous !== result.base && previous !== api.DEFAULT_API_ORIGIN && !api.isLocalOrigin(previous)) {
+      try {
+        await chrome.permissions.remove({ origins: [`${previous}/*`] });
+      } catch {
+        // The grant may already be gone.
+      }
     }
 
-    await chrome.storage.local.set({ [API_BASE_KEY]: decision.value });
-    status.textContent = decision.value ? 'Saved. The job-page widget will use this backend.' : 'Cleared. The default backend will be used.';
+    status.textContent = result.message;
+
+    if (result.saved) {
+      input.value = result.base;
+    } else if (result.requested) {
+      input.value = '';
+    }
   });
 
   document.getElementById('resetApiBase').addEventListener('click', async () => {
     input.value = '';
-    await chrome.storage.local.remove(API_BASE_KEY);
+    await chrome.storage.local.remove(api.API_BASE_KEY);
     status.textContent = 'Reset. The default backend will be used.';
   });
 }

@@ -30,7 +30,12 @@
       <summary>Advanced</summary>
       <div class="api-base-row">
         <label class="factor-label" for="apiBaseInput">Backend URL</label>
-        <input id="apiBaseInput" type="url" placeholder="https://your-app.vercel.app" autocomplete="off" spellcheck="false" />
+        <input id="apiBaseInput" type="url" placeholder="https://your-server.example" autocomplete="off" spellcheck="false" />
+        <label class="developer-mode" for="developerMode">
+          <input id="developerMode" type="checkbox" />
+          Developer mode
+        </label>
+        <p class="summary-text">Allows another https server. Chrome asks permission when you save it.</p>
         <p class="advanced-warning">Job text will be sent to that server.</p>
         <p id="apiBaseStatus" class="summary-text"></p>
         <button class="btn btn-primary" id="saveApiBase" type="button">Save</button>
@@ -39,6 +44,7 @@
     </details>
     <nav id="popupLinks" class="popup-links" aria-label="Help"></nav>
   </div>
+  <script src="../lib/api-base.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

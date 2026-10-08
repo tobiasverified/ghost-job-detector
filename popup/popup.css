@@ -112,6 +112,13 @@ body {
   font-size: 12px;
 }
 
+.developer-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 .popup-details .api-base-row {
   margin-top: 10px;
 }
