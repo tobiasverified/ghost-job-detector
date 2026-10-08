@@ -95,6 +95,37 @@ Calls the Glassdoor ratings API on RapidAPI and returns `{ "overall": 3.85, "sou
 
 All three endpoints require header `X-GHD-Client: ghost-job-detector`. That header is not a secret. It stops ordinary web pages from spending the NewsData and RapidAPI quotas. Requests are also limited to 50 per IP per hour.
 
+## Self-hosting
+
+Create a Supabase project. In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql), then each dated file in this order:
+
+1. [`supabase/2026-10-05-rate-limit-rpc.sql`](supabase/2026-10-05-rate-limit-rpc.sql)
+2. [`supabase/2026-10-06-request-log.sql`](supabase/2026-10-06-request-log.sql)
+3. [`supabase/2026-10-07-part-b.sql`](supabase/2026-10-07-part-b.sql)
+4. [`supabase/2026-10-09-invite-keys.sql`](supabase/2026-10-09-invite-keys.sql)
+
+Those files enable row level security and add no anon policies. Table and function access is granted to `service_role` only. Use that key as `SUPABASE_SERVICE_ROLE_KEY`.
+
+Set the Vercel environment variables listed in [`.env.example`](.env.example). `vercel.json` calls `GET /api/cleanup` every day at 08:00 UTC. Set `CRON_SECRET` and send it as `Authorization: Bearer CRON_SECRET`; the route returns 401 until that secret is set.
+
+`REQUIRE_INVITE_KEY` is off unless it is the string `true`, so a self-hosted server accepts checks without an invite key. To issue one, set `INVITE_KEY_SECRET` and run:
+
+```bash
+node scripts/create-invite-key.mjs --label "a desk" --limit 40
+```
+
+The script prints the key once and does not save it.
+
+To point the extension at your server, open the popup, turn on Developer mode, enter the server URL, choose Save, and approve the browser permission prompt.
+
+## Privacy
+
+What the extension and the hosted backend keep is in [PRIVACY.md](PRIVACY.md). The same page is served at `/privacy.html`.
+
+## Known limits
+
+After an update, LinkedIn tabs that are already open are re-injected automatically. Chrome may still need the extension re-enabled before that runs.
+
 ## Tests
 
 ```bash

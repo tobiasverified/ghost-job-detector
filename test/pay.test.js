@@ -112,8 +112,8 @@ test('the market fixture compares base pay, and a weak title or thin sample does
 
   assert.equal(compared.compared, true);
   assert.equal(compared.note, 'within the range');
-  assert.equal(compared.median, 125890.97);
-  assert.match(compared.text, /Listed \$130-160K · Market median \$126K for this title in New York, NY \(50,621 reports\)/);
+  assert.equal(compared.median, 141500.4);
+  assert.match(compared.text, /Listed \$130-160K · Market median \$142K for this title in North Harbor, OR \(1,840 reports\)/);
   assert.notEqual(compared.median, ESTIMATE.total_pay.p50);
 
   const below = comparePostedPay(pay.parsePostedPay('$80,000'), ESTIMATE, 'Software Engineer', 'New York, NY');
@@ -135,9 +135,9 @@ test('the market fixture compares base pay, and a weak title or thin sample does
 test('company salary rows are read from base pay, not total pay', () => {
   const base = pay.companyBasePay(COMPANY, 'Software Engineer');
 
-  assert.equal(base.p50, 184722.83);
+  assert.equal(base.p50, 172400.12);
   assert.ok(base.p50 < COMPANY.salaries[0].total_pay.p50);
-  assert.equal(pay.companyBasePay(COMPANY, 'Senior Software Engineer').p50, 231325.27);
+  assert.equal(pay.companyBasePay(COMPANY, 'Senior Software Engineer').p50, 210800.33);
   assert.equal(pay.companyBasePay(COMPANY, 'Data Scientist'), null);
 });
 
@@ -185,7 +185,7 @@ test('the market cache is title, location, and experience, 14 days for a hit and
   assert.equal(second.cached, true);
   assert.equal(second.note, 'below the 25th percentile');
   const stored = await cache.getMeta(marketCacheKey('Software Engineer', 'New York, NY'), NOW);
-  assert.equal(stored.payload.estimate.base_pay.p50, 125890.97);
+  assert.equal(stored.payload.estimate.base_pay.p50, 141500.4);
   assert.equal(await cache.get(marketCacheKey('Software Engineer', 'New York, NY'), new Date(NOW.getTime() + MARKET_TTL_MS + 1000)), null);
 
   const failed = new MemoryCache();
