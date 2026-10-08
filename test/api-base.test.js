@@ -126,16 +126,18 @@ test('the permission request fires only when a custom https backend is saved', a
   assert.equal(storage.data.ghd_api_base, 'https://jobs.example.com');
   assert.equal(storage.data.ghd_developer_mode, true);
 
+  const declinedStorage = memoryStorage({ ghd_api_base: 'https://jobs.example.com' });
   const declined = await applyApiBaseChoice('https://other.example.com', {
     developerMode: true,
-    storage: memoryStorage(),
+    storage: declinedStorage,
     requestPermission: async () => false
   });
 
   assert.equal(declined.saved, false);
   assert.equal(declined.requested, true);
   assert.equal(declined.base, DEFAULT_API_BASE);
-  assert.match(declined.message, /default backend/);
+  assert.equal(declined.message, 'Permission was declined, so the default server is still in use');
+  assert.equal(Object.hasOwn(declinedStorage.data, 'ghd_api_base'), false);
 });
 
 test('the popup asks Chrome for permission from the save button', () => {

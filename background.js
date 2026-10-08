@@ -43,43 +43,20 @@ function filesForUrl(rawUrl) {
 }
 
 const INJECT_DEBUG_KEY = 'ghd_inject_debug';
-const INJECT_DEBUG_LIMIT = 20;
 // Content scripts run in the isolated world. The probe has to use that same
 // world: the page's main world shares the DOM but not __GHD_COPY_LIVE__.
 const SCRIPT_WORLD = 'ISOLATED';
-
-function tabLocation(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return { host: url.host, path: url.pathname };
-  } catch {
-    return { host: '', path: '' };
-  }
-}
 
 function errorText(error) {
   return String(error?.message || error || 'unknown error');
 }
 
-async function recordInjectDebug(entry) {
-  let current = [];
-
+async function clearInjectDebug() {
   try {
-    const stored = await chrome.storage.local.get(INJECT_DEBUG_KEY);
-    current = Array.isArray(stored?.[INJECT_DEBUG_KEY]) ? stored[INJECT_DEBUG_KEY] : [];
+    await chrome.storage.local.remove(INJECT_DEBUG_KEY);
   } catch {
-    current = [];
+    // A missing storage area should not stop injection.
   }
-
-  const next = [entry, ...current].slice(0, INJECT_DEBUG_LIMIT);
-
-  try {
-    await chrome.storage.local.set({ [INJECT_DEBUG_KEY]: next });
-  } catch {
-    // The record is diagnostic only.
-  }
-
-  return entry;
 }
 
 async function targetedFrames(tabId) {
@@ -185,31 +162,13 @@ function extensionCopyIsHealthy() {
 
 async function injectOpenTab(tab) {
   const files = filesForUrl(tab?.url);
-  const location = tabLocation(tab?.url);
   const frames = await targetedFrames(tab?.id);
-  const record = {
-    id: tab?.id ?? null,
-    host: location.host,
-    path: location.path,
-    healthy: false,
-    healthyReason: '',
-    executeScript: false,
-    files: null,
-    result: '',
-    frameIds: frames.frameIds,
-    pageFrameIds: frames.pageFrameIds,
-    world: SCRIPT_WORLD
-  };
-
-  if (frames.frameError) {
-    record.frameError = frames.frameError;
-  }
 
   if (!files || !tab?.id) {
-    record.healthyReason = 'no-match';
-    record.result = 'not-injected';
-    return record;
+    return;
   }
+
+  let healthy = false;
 
   try {
     const probed = await chrome.scripting.executeScript({
@@ -220,24 +179,15 @@ async function injectOpenTab(tab) {
     const verdict = probed?.[0]?.result;
 
     if (verdict && typeof verdict === 'object') {
-      record.healthy = verdict.healthy === true;
-      record.healthyReason = String(verdict.reason || '');
-    } else {
-      record.healthy = false;
-      record.healthyReason = 'probe-empty';
+      healthy = verdict.healthy === true;
     }
-  } catch (error) {
-    record.healthy = false;
-    record.healthyReason = `probe-error: ${errorText(error)}`;
+  } catch {
+    healthy = false;
   }
 
-  if (record.healthy) {
-    record.result = 'skipped';
-    return record;
+  if (healthy) {
+    return;
   }
-
-  record.executeScript = true;
-  record.files = files;
 
   try {
     await chrome.scripting.executeScript({
@@ -245,34 +195,27 @@ async function injectOpenTab(tab) {
       world: SCRIPT_WORLD,
       files
     });
-    record.result = 'ok';
-  } catch (error) {
-    record.result = errorText(error);
+  } catch {
+    // The page can reject injection during discard or navigation.
   }
-
-  return record;
 }
 
 async function injectMatchingTabs(reason) {
-  const entry = {
-    time: new Date().toISOString(),
-    event: reason || 'startup',
-    tabs: []
-  };
+  const event = reason || 'startup';
+
+  if (event === 'install' || event === 'update' || event === 'startup') {
+    await clearInjectDebug();
+  }
 
   let tabs = [];
 
   try {
     tabs = await chrome.tabs.query({ url: OPEN_TAB_URLS });
-  } catch (error) {
-    entry.result = errorText(error);
-    await recordInjectDebug(entry);
-    return entry;
+  } catch {
+    return;
   }
 
-  entry.tabs = await Promise.all((tabs || []).map((tab) => injectOpenTab(tab)));
-  await recordInjectDebug(entry);
-  return entry;
+  await Promise.all((tabs || []).map((tab) => injectOpenTab(tab)));
 }
 
 let openTabsInjection = null;
@@ -287,36 +230,7 @@ function injectOpenTabs(reason) {
     return openTabsInjection;
   }
 
-  return openTabsInjection.then((report) => recordInjectDebug({
-    time: new Date().toISOString(),
-    event,
-    tabs: report?.tabs || [],
-    note: 'joined an injection already running'
-  }));
-}
-
-function allowedFetchUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    const host = url.hostname.toLowerCase();
-
-    if (url.protocol !== 'https:') {
-      return false;
-    }
-
-    if (
-      host === 'html.duckduckgo.com'
-      || host === 'duckduckgo.com'
-      || host === 'lite.duckduckgo.com'
-    ) {
-      return true;
-    }
-
-    return (host === 'linkedin.com' || host.endsWith('.linkedin.com'))
-      && (url.pathname.includes('/jobs/') || url.pathname.includes('/company/'));
-  } catch {
-    return false;
-  }
+  return openTabsInjection;
 }
 
 function usableSearchHtml(url, html) {
@@ -823,28 +737,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'FETCH_TEXT') {
-    if (!allowedFetchUrl(message.url)) {
-      sendResponse({ ok: false, error: 'BLOCKED_URL' });
-      return true;
-    }
-
-    loadAllowedText(message.url, { skipTab: message.skipTab === true })
-      .then((page) => sendResponse({
-        ok: true,
-        text: page.text,
-        status: page.status,
-        finalUrl: page.finalUrl
-      }))
-      .catch((error) => sendResponse({
-        ok: false,
-        error: error.message,
-        finalUrl: error.finalUrl || ''
-      }));
-
-    return true;
-  }
-
   if (message.type === 'JOB_DATA_AVAILABLE') {
     currentJob = message.job;
     sendResponse({ success: true });
@@ -920,13 +812,6 @@ chrome.runtime.onInstalled.addListener((details) => {
   if (reason === 'install' || reason === 'update') {
     return injectOpenTabs(reason);
   }
-
-  return recordInjectDebug({
-    time: new Date().toISOString(),
-    event: reason,
-    tabs: [],
-    note: 'onInstalled did not re-inject open tabs'
-  });
 });
 
 injectOpenTabs('startup');

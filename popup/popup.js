@@ -171,7 +171,7 @@ function storagePort() {
   };
 }
 
-async function init() {
+export async function init() {
   await migrateStorage();
   const api = apiBaseApi();
   const input = document.getElementById('apiBaseInput');

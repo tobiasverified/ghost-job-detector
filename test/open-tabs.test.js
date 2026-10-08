@@ -25,10 +25,16 @@ function loadBackground(tabs, { framesFor, seed = [] } = {}) {
   const queries = [];
   const calls = [];
   const installed = [];
+  const messages = [];
+  const debugWrites = [];
   const debug = [...seed];
   const chrome = {
     runtime: {
-      onMessage: { addListener() {} },
+      onMessage: {
+        addListener(fn) {
+          messages.push(fn);
+        }
+      },
       onSuspend: { addListener() {} },
       onInstalled: {
         addListener(fn) {
@@ -50,8 +56,13 @@ function loadBackground(tabs, { framesFor, seed = [] } = {}) {
           return { ghd_inject_debug: debug };
         },
         async set(items) {
-          if (Array.isArray(items?.ghd_inject_debug)) {
-            debug.splice(0, debug.length, ...items.ghd_inject_debug);
+          if (Object.prototype.hasOwnProperty.call(items || {}, 'ghd_inject_debug')) {
+            debugWrites.push(items.ghd_inject_debug);
+          }
+        },
+        async remove(key) {
+          if (key === 'ghd_inject_debug') {
+            debug.splice(0, debug.length);
           }
         }
       }
@@ -148,7 +159,7 @@ function loadBackground(tabs, { framesFor, seed = [] } = {}) {
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(new URL('../background.js', import.meta.url), 'utf8'), sandbox);
 
-  return { sandbox, queries, calls, installed, debug };
+  return { sandbox, queries, calls, installed, messages, debug, debugWrites };
 }
 
 function fileCalls(calls) {
@@ -297,7 +308,7 @@ test('leftover widget DOM does not skip injection', async () => {
   assert.deepEqual(tabs[2].injected.map((files) => [...files]), [LINKEDIN_FILES]);
 });
 
-test('a probe error still injects, and the reload writes a debug record', async () => {
+test('a probe error still injects, and the reload deletes a stored debug record', async () => {
   const manifest = JSON.parse(readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
   assert.ok(manifest.permissions.includes('scripting'));
   assert.ok(manifest.host_permissions.some((pattern) => pattern.includes('linkedin.com')));
@@ -318,6 +329,7 @@ test('a probe error still injects, and the reload writes a debug record', async 
     }
   ];
   const page = loadBackground(tabs, {
+    seed: [{ event: 'old', tabs: [{ host: 'www.linkedin.com', path: '/jobs/search/' }] }],
     framesFor() {
       return [{ frameId: 0 }, { frameId: 7 }];
     }
@@ -328,24 +340,8 @@ test('a probe error still injects, and the reload writes a debug record', async 
   await page.installed[0]({ reason: 'chrome_update' });
 
   assert.deepEqual(tabs[0].injected.map((files) => [...files]), [LINKEDIN_FILES, LINKEDIN_FILES]);
-  const startup = page.debug.find((entry) => entry.event === 'startup');
-  const update = page.debug.find((entry) => entry.event === 'update');
-  const browserUpdate = page.debug[0];
-  assert.equal(browserUpdate.event, 'chrome_update');
-  assert.equal(browserUpdate.tabs.length, 0);
-  assert.equal(startup.tabs[0].host, 'www.linkedin.com');
-  assert.equal(startup.tabs[0].path, '/jobs/search/');
-  assert.equal(String(startup.tabs[0].path).includes('?'), false);
-  assert.equal(startup.tabs[0].healthy, false);
-  assert.match(startup.tabs[0].healthyReason, /probe-error: Cannot access contents/);
-  assert.equal(startup.tabs[0].executeScript, true);
-  assert.deepEqual([...startup.tabs[0].files], LINKEDIN_FILES);
-  assert.equal(startup.tabs[0].result, 'ok');
-  assert.deepEqual([...startup.tabs[0].frameIds], [0]);
-  assert.deepEqual([...startup.tabs[0].pageFrameIds], [0, 7]);
-  assert.equal(startup.tabs[0].world, 'ISOLATED');
-  assert.equal(update.tabs[0].executeScript, true);
-  assert.equal(page.debug.length <= 20, true);
+  assert.deepEqual(page.debug, []);
+  assert.deepEqual(page.debugWrites, []);
 });
 
 test('a probe that cannot see the content-script copy does not call a host healthy', async () => {
@@ -369,9 +365,9 @@ test('a probe that cannot see the content-script copy does not call a host healt
 
   await page.sandbox.injectOpenTabs('startup');
 
-  assert.equal(page.debug[0].tabs[0].healthy, false);
-  assert.equal(page.debug[0].tabs[0].healthyReason, 'no-live-copy');
   assert.deepEqual(tabs[0].injected.map((files) => [...files]), [LINKEDIN_FILES]);
+  assert.deepEqual(page.debug, []);
+  assert.deepEqual(page.debugWrites, []);
 });
 
 test('headcount, job page, and widget ignore a second injection', () => {
@@ -453,7 +449,7 @@ test('a dead copy flag does not stop a new library copy', () => {
   assert.equal(typeof heuristics.GhostJobHeuristics.analyzeJob, 'function');
 });
 
-test('an install with no matching tab is still recorded, newest first', async () => {
+test('an install deletes a stored debug record and does not write one', async () => {
   const seed = Array.from({ length: 20 }, (_, index) => ({
     time: String(index),
     event: 'old',
@@ -464,9 +460,20 @@ test('an install with no matching tab is still recorded, newest first', async ()
   await page.sandbox.injectOpenTabs('startup');
   await page.installed[0]({ reason: 'install' });
 
-  assert.equal(page.debug.length, 20);
-  assert.equal(page.debug[0].event, 'install');
-  assert.equal(page.debug[0].tabs.length, 0);
-  assert.equal(page.debug[1].event, 'startup');
-  assert.equal(page.debug.some((entry) => entry.time === '19'), false);
+  assert.deepEqual(page.debug, []);
+  assert.deepEqual(page.debugWrites, []);
+});
+
+test('FETCH_TEXT is not handled', () => {
+  const page = loadBackground([]);
+  const listener = page.messages[0];
+  let responded = false;
+
+  const handled = listener({ type: 'FETCH_TEXT', url: 'https://www.linkedin.com/jobs/view/1' }, {}, () => {
+    responded = true;
+  });
+
+  assert.equal(handled, false);
+  assert.equal(responded, false);
+  assert.equal(readFileSync(new URL('../background.js', import.meta.url), 'utf8').includes('FETCH_TEXT'), false);
 });

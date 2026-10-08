@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
@@ -7,9 +8,13 @@ import {
   feedbackBody,
   feedbackMailto,
   formatExtensionVersion,
+  init,
   pageStatusText,
   renderPopupLinks
 } from '../popup/popup.js';
+
+const require = createRequire(import.meta.url);
+require('../lib/api-base.js');
 
 function createElement(tag) {
   return {
@@ -162,4 +167,81 @@ test('the status line follows the active tab', () => {
 test('the version line is the manifest version', () => {
   assert.equal(formatExtensionVersion('1.1.10'), 'v1.1.10');
   assert.equal(formatExtensionVersion(''), '');
+});
+
+test('a declined backend permission says the default server is still in use', async () => {
+  const elements = {};
+
+  function element(id) {
+    const node = {
+      id,
+      value: '',
+      textContent: '',
+      checked: false,
+      children: [],
+      replaceChildren() {
+        this.children = [];
+      },
+      append() {},
+      addEventListener(type, fn) {
+        node[type] = fn;
+      }
+    };
+    elements[id] = node;
+    return node;
+  }
+
+  for (const id of ['apiBaseInput', 'apiBaseStatus', 'developerMode', 'extensionVersion', 'pageStatus', 'popupLinks', 'saveApiBase', 'resetApiBase']) {
+    element(id);
+  }
+
+  const stored = { ghd_api_base: 'https://jobs.example.com', ghd_developer_mode: true, ghd_storage_version: '1.1.10' };
+
+  globalThis.document = {
+    getElementById(id) {
+      return elements[id];
+    },
+    createElement
+  };
+  globalThis.chrome = {
+    runtime: {
+      getManifest() {
+        return { version: '1.1.10' };
+      }
+    },
+    tabs: {
+      async query() {
+        return [];
+      }
+    },
+    storage: {
+      local: {
+        async get() {
+          return stored;
+        },
+        async set(values) {
+          Object.assign(stored, values);
+        },
+        async remove(key) {
+          delete stored[key];
+        },
+        async clear() {}
+      }
+    },
+    permissions: {
+      async request() {
+        return false;
+      },
+      async remove() {}
+    }
+  };
+
+  await init();
+  elements.developerMode.checked = true;
+  elements.apiBaseInput.value = 'https://other.example.com';
+  await elements.saveApiBase.click();
+
+  assert.equal(elements.apiBaseStatus.textContent, 'Permission was declined, so the default server is still in use');
+  assert.equal(elements.apiBaseInput.value, '');
+  assert.equal(Object.hasOwn(stored, 'ghd_api_base'), false);
 });
