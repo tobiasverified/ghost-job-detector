@@ -1,3 +1,12 @@
+-- After applying, run these in the Supabase SQL editor. The test suite
+-- mocks ghd_consume_paid_call and does not execute this file.
+--   select ghd_consume_paid_call('test', 5);  -- true
+--   select ghd_consume_paid_call('test', 5, 'k1', 2);  -- true, then true, then false
+--   insert into ghd_revoked_keys (key_id) values ('k1');  -- the call above then returns false
+--   delete from ghd_daily_usage where provider = 'test';
+--   delete from ghd_key_usage where key_id = 'k1';
+--   delete from ghd_revoked_keys where key_id = 'k1';
+
 -- Review this file, then run it in the Supabase SQL editor.
 -- It is rerunnable. It is not applied by an app deploy.
 -- Run it after the earlier ghd_checks, ghd_daily_usage, and ghd_cleanup files.
@@ -51,73 +60,73 @@ security invoker
 set search_path = public
 as $$
 declare
-  today date := (timezone('utc', now()))::date;
-  provider text := btrim(coalesce(p_provider, ''));
-  key_id text := nullif(btrim(coalesce(p_key_id, '')), '');
-  global_calls integer;
-  key_calls integer;
+  v_today date := (timezone('utc', now()))::date;
+  v_provider text := btrim(coalesce(p_provider, ''));
+  v_key_id text := nullif(btrim(coalesce(p_key_id, '')), '');
+  v_global_calls integer;
+  v_key_calls integer;
 begin
-  if provider = '' or char_length(provider) > 40 or p_limit is null or p_limit < 1 then
+  if v_provider = '' or char_length(v_provider) > 40 or p_limit is null or p_limit < 1 then
     return false;
   end if;
 
-  if key_id is not null and (
-    char_length(key_id) > 80 or p_key_limit is null or p_key_limit < 1
+  if v_key_id is not null and (
+    char_length(v_key_id) > 80 or p_key_limit is null or p_key_limit < 1
   ) then
     return false;
   end if;
 
-  if key_id is not null and exists (
-    select 1 from public.ghd_revoked_keys where ghd_revoked_keys.key_id = key_id
+  if v_key_id is not null and exists (
+    select 1 from public.ghd_revoked_keys as r where r.key_id = v_key_id
   ) then
     return false;
   end if;
 
-  insert into public.ghd_daily_usage (day, provider, calls)
-  values (today, provider, 0)
+  insert into public.ghd_daily_usage as u (day, provider, calls)
+  values (v_today, v_provider, 0)
   on conflict (day, provider) do nothing;
 
-  select calls into global_calls
-  from public.ghd_daily_usage
-  where day = today and ghd_daily_usage.provider = provider
+  select u.calls into v_global_calls
+  from public.ghd_daily_usage as u
+  where u.day = v_today and u.provider = v_provider
   for update;
 
-  if global_calls >= p_limit then
+  if v_global_calls >= p_limit then
     return false;
   end if;
 
-  if key_id is not null then
-    insert into public.ghd_key_usage (day, key_id, calls)
-    values (today, key_id, 0)
+  if v_key_id is not null then
+    insert into public.ghd_key_usage as k (day, key_id, calls)
+    values (v_today, v_key_id, 0)
     on conflict (day, key_id) do nothing;
 
-    select calls into key_calls
-    from public.ghd_key_usage
-    where day = today and ghd_key_usage.key_id = key_id
+    select k.calls into v_key_calls
+    from public.ghd_key_usage as k
+    where k.day = v_today and k.key_id = v_key_id
     for update;
 
-    if key_calls >= p_key_limit then
+    if v_key_calls >= p_key_limit then
       return false;
     end if;
 
     if exists (
-      select 1 from public.ghd_revoked_keys where ghd_revoked_keys.key_id = key_id
+      select 1 from public.ghd_revoked_keys as r where r.key_id = v_key_id
     ) then
       return false;
     end if;
 
-    update public.ghd_key_usage
-    set calls = calls + 1
-    where day = today and ghd_key_usage.key_id = key_id and calls < p_key_limit;
+    update public.ghd_key_usage as k
+    set calls = k.calls + 1
+    where k.day = v_today and k.key_id = v_key_id and k.calls < p_key_limit;
 
     if not found then
       return false;
     end if;
   end if;
 
-  update public.ghd_daily_usage
-  set calls = calls + 1
-  where day = today and ghd_daily_usage.provider = provider and calls < p_limit;
+  update public.ghd_daily_usage as u
+  set calls = u.calls + 1
+  where u.day = v_today and u.provider = v_provider and u.calls < p_limit;
 
   return found;
 end;
