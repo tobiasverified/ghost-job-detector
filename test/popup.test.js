@@ -191,7 +191,7 @@ test('a declined backend permission says the default server is still in use', as
     return node;
   }
 
-  for (const id of ['apiBaseInput', 'apiBaseStatus', 'developerMode', 'extensionVersion', 'pageStatus', 'popupLinks', 'saveApiBase', 'resetApiBase']) {
+  for (const id of ['apiBaseInput', 'apiBaseStatus', 'developerMode', 'extensionVersion', 'pageStatus', 'popupLinks', 'saveApiBase', 'resetApiBase', 'inviteKeyInput', 'inviteKeyStatus', 'saveInviteKey', 'clearInviteKey']) {
     element(id);
   }
 
@@ -244,4 +244,97 @@ test('a declined backend permission says the default server is still in use', as
   assert.equal(elements.apiBaseStatus.textContent, 'Permission was declined, so the default server is still in use');
   assert.equal(elements.apiBaseInput.value, '');
   assert.equal(Object.hasOwn(stored, 'ghd_api_base'), false);
+});
+
+test('a saved invite key is masked and still there after a reload', async () => {
+  const elements = {};
+  const stored = { ghd_storage_version: '1.1.10', ghd_developer_mode: false };
+
+  function element(id) {
+    const node = {
+      id,
+      value: '',
+      textContent: '',
+      checked: false,
+      children: [],
+      replaceChildren() {
+        this.children = [];
+      },
+      append() {},
+      addEventListener(type, fn) {
+        node[type] = fn;
+      }
+    };
+    elements[id] = node;
+    return node;
+  }
+
+  for (const id of ['apiBaseInput', 'apiBaseStatus', 'developerMode', 'extensionVersion', 'pageStatus', 'popupLinks', 'saveApiBase', 'resetApiBase', 'inviteKeyInput', 'inviteKeyStatus', 'saveInviteKey', 'clearInviteKey']) {
+    element(id);
+  }
+
+  globalThis.document = {
+    getElementById(id) {
+      return elements[id];
+    },
+    createElement
+  };
+  globalThis.chrome = {
+    runtime: { getManifest() { return { version: '1.1.10' }; } },
+    tabs: { async query() { return []; } },
+    storage: {
+      local: {
+        async get(keys) {
+          if (keys == null) {
+            return { ...stored };
+          }
+
+          const names = Array.isArray(keys) ? keys : [keys];
+          const result = {};
+
+          for (const name of names) {
+            if (Object.prototype.hasOwnProperty.call(stored, name)) {
+              result[name] = stored[name];
+            }
+          }
+
+          return result;
+        },
+        async set(values) {
+          Object.assign(stored, values);
+        },
+        async remove(key) {
+          delete stored[key];
+        },
+        async clear() {}
+      }
+    },
+    permissions: {
+      async request() { return true; },
+      async remove() {}
+    }
+  };
+
+  const key = 'ghd_examplepayload.example-signature';
+  await init();
+  elements.inviteKeyInput.value = key;
+  await elements.saveInviteKey.click();
+
+  assert.equal(stored.ghd_invite_key, key);
+  assert.equal(elements.inviteKeyInput.value, '');
+  assert.equal(elements.inviteKeyStatus.textContent.includes(key), false);
+  assert.match(elements.inviteKeyStatus.textContent, /Saved \(ture\)/);
+
+  elements.inviteKeyInput.value = 'typed during reload';
+  elements.inviteKeyStatus.textContent = '';
+  await init();
+
+  assert.equal(stored.ghd_invite_key, key);
+  assert.equal(elements.inviteKeyInput.value, '');
+  assert.equal(elements.inviteKeyStatus.textContent, 'Saved (ture)');
+  assert.equal(elements.inviteKeyStatus.textContent.includes(key), false);
+
+  await elements.clearInviteKey.click();
+  assert.equal(Object.hasOwn(stored, 'ghd_invite_key'), false);
+  assert.equal(elements.inviteKeyStatus.textContent, 'Invite key cleared.');
 });

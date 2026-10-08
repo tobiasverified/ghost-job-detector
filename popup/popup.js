@@ -137,6 +137,12 @@ async function migrateStorage() {
     next[developerModeKey] = true;
   }
 
+  const inviteKey = apiBaseApi().INVITE_KEY_STORAGE;
+
+  if (stored[inviteKey]) {
+    next[inviteKey] = stored[inviteKey];
+  }
+
   if (stored.ghd_widget_pos) {
     next.ghd_widget_pos = stored.ghd_widget_pos;
   }
@@ -228,5 +234,35 @@ export async function init() {
     input.value = '';
     await chrome.storage.local.remove(api.API_BASE_KEY);
     status.textContent = 'Reset. The default backend will be used.';
+  });
+
+  const inviteInput = document.getElementById('inviteKeyInput');
+  const inviteStatus = document.getElementById('inviteKeyStatus');
+  const inviteStored = await chrome.storage.local.get(api.INVITE_KEY_STORAGE);
+  const savedInvite = String(inviteStored[api.INVITE_KEY_STORAGE] || '');
+  inviteInput.value = '';
+  inviteStatus.textContent = savedInvite ? api.maskInviteKey(savedInvite) : '';
+
+  document.getElementById('saveInviteKey').addEventListener('click', async () => {
+    const next = inviteInput.value.trim();
+    const current = await chrome.storage.local.get(api.INVITE_KEY_STORAGE);
+    const existing = String(current[api.INVITE_KEY_STORAGE] || '');
+
+    if (!next) {
+      inviteStatus.textContent = existing
+        ? api.maskInviteKey(existing)
+        : 'Paste an invite key first.';
+      return;
+    }
+
+    await chrome.storage.local.set({ [api.INVITE_KEY_STORAGE]: next });
+    inviteInput.value = '';
+    inviteStatus.textContent = api.maskInviteKey(next);
+  });
+
+  document.getElementById('clearInviteKey').addEventListener('click', async () => {
+    inviteInput.value = '';
+    await chrome.storage.local.remove(api.INVITE_KEY_STORAGE);
+    inviteStatus.textContent = 'Invite key cleared.';
   });
 }

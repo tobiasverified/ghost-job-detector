@@ -476,6 +476,7 @@ async function loadAllowedText(url, options = {}) {
 
 const API_BASE_KEY = 'ghd_api_base';
 const DEVELOPER_MODE_KEY = 'ghd_developer_mode';
+const INVITE_KEY_STORAGE = 'ghd_invite_key';
 const DEFAULT_API_BASE = 'https://ghost-job-detector-nine.vercel.app';
 
 function storageAdapter() {
@@ -504,6 +505,38 @@ async function apiBase() {
   return api.resolveStoredApiBase(stored[API_BASE_KEY], {
     developerMode: stored[DEVELOPER_MODE_KEY] === true
   });
+}
+
+async function backendHeaders(base) {
+  const stored = await chrome.storage.local.get([INVITE_KEY_STORAGE, DEVELOPER_MODE_KEY]);
+  const api = self.GhdApiBase;
+  const keyHeader = api?.inviteKeyHeader
+    ? api.inviteKeyHeader(stored[INVITE_KEY_STORAGE], base, stored[DEVELOPER_MODE_KEY] === true)
+    : {};
+
+  return {
+    'Content-Type': 'application/json',
+    'X-GHD-Client': 'ghost-job-detector',
+    ...keyHeader
+  };
+}
+
+async function inviteFailure(response) {
+  if (response.status !== 401) {
+    return '';
+  }
+
+  try {
+    const payload = await response.json();
+
+    if (payload?.error === 'invite_required' || payload?.error === 'invite_invalid') {
+      return payload.error;
+    }
+  } catch {
+    // A 401 without that body is still an invite rejection.
+  }
+
+  return 'invite_invalid';
 }
 
 async function cachedSearchHtml(query, key, ttlMs) {
@@ -579,10 +612,7 @@ async function enrichJob(message) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/analyze-job`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GHD-Client': 'ghost-job-detector'
-    },
+    headers: await backendHeaders(base),
     body: JSON.stringify({
       ...body,
       deferReposts: true
@@ -595,7 +625,8 @@ async function enrichJob(message) {
   });
 
   if (!response.ok) {
-    throw new Error(`API_${response.status}`);
+    const invite = await inviteFailure(response);
+    throw new Error(invite || `API_${response.status}`);
   }
 
   const analysis = await response.json();
@@ -618,10 +649,7 @@ async function enrichReposts(message) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/job-reposts`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GHD-Client': 'ghost-job-detector'
-    },
+    headers: await backendHeaders(base),
     body: JSON.stringify({
       ...body,
       clientHtml: { reposts }
@@ -630,7 +658,8 @@ async function enrichReposts(message) {
   });
 
   if (!response.ok) {
-    throw new Error(`API_${response.status}`);
+    const invite = await inviteFailure(response);
+    throw new Error(invite || `API_${response.status}`);
   }
 
   const payload = await response.json();
@@ -649,10 +678,7 @@ async function enrichPay(message) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/pay-vs-market`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GHD-Client': 'ghost-job-detector'
-    },
+    headers: await backendHeaders(base),
     body: JSON.stringify({
       title: body.title || '',
       location: body.locationNormalized || body.location || '',
@@ -662,7 +688,8 @@ async function enrichPay(message) {
   });
 
   if (!response.ok) {
-    throw new Error(`API_${response.status}`);
+    const invite = await inviteFailure(response);
+    throw new Error(invite || `API_${response.status}`);
   }
 
   return response.json();
@@ -673,16 +700,14 @@ async function enrichCareers(message) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/careers-check`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GHD-Client': 'ghost-job-detector'
-    },
+    headers: await backendHeaders(base),
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10000)
   });
 
   if (!response.ok) {
-    throw new Error(`API_${response.status}`);
+    const invite = await inviteFailure(response);
+    throw new Error(invite || `API_${response.status}`);
   }
 
   const payload = await response.json();
@@ -693,16 +718,14 @@ async function resolveCompanyIdentity(body) {
   const base = await apiBase();
   const response = await fetch(`${base}/api/company-identity`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-GHD-Client': 'ghost-job-detector'
-    },
+    headers: await backendHeaders(base),
     body: JSON.stringify(body || {}),
     signal: AbortSignal.timeout(15000)
   });
 
   if (!response.ok) {
-    throw new Error(`API_${response.status}`);
+    const invite = await inviteFailure(response);
+    throw new Error(invite || `API_${response.status}`);
   }
 
   return response.json();

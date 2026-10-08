@@ -5,7 +5,7 @@ import vm from 'node:vm';
 
 // A small stand-in for the page: the panel's HTML is kept as a string, and
 // buttons found by id can be clicked from the test.
-function loadWidget({ holdPay = false, sendError = null, trackTeardown = false } = {}) {
+function loadWidget({ holdPay = false, sendError = null, trackTeardown = false, enrichError = '' } = {}) {
   const handlers = new Map();
   const panel = { innerHTML: '' };
   const stored = {};
@@ -142,6 +142,14 @@ function loadWidget({ holdPay = false, sendError = null, trackTeardown = false }
         id: 'ghost-job-detector',
         sendMessage(message) {
           sent.push(message);
+
+          if (enrichError && message.type === 'ENRICH_JOB') {
+            return Promise.resolve({ ok: false, error: enrichError });
+          }
+
+          if (enrichError) {
+            return Promise.resolve({ ok: false });
+          }
 
           if (sendError && message.type === 'ENRICH_JOB') {
             return Promise.reject(sendError);
@@ -974,4 +982,18 @@ test('a sendMessage error other than an invalidated context is still reported', 
   } finally {
     process.off('unhandledRejection', onUnhandled);
   }
+});
+
+test('a 401 invite error is shown once and is not retried', async () => {
+  const page = loadWidget({ enrichError: 'invite_required' });
+
+  await page.widget.analyze(jobA);
+  page.click('ghd-full');
+  await flush();
+  await flush();
+
+  assert.match(page.panel.innerHTML, /An invite key is required/);
+  assert.doesNotMatch(page.panel.innerHTML, /try again/i);
+  assert.doesNotMatch(page.panel.innerHTML, /id="ghd-retry"/);
+  assert.equal(page.sent.filter((message) => message.type === 'ENRICH_JOB').length, 1);
 });
