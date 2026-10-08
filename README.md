@@ -6,9 +6,9 @@ Unofficial: not affiliated with LinkedIn, Workday, Glassdoor or any data provide
 
 ## Demo
 
-<VIDEO_URL>
+<https://github.com/user-attachments/assets/2f2cb137-c32e-4bf2-a578-8403e620d8ae>
 
-A silent 21-second clip of one check.
+A short 21-second clip of an extension check.
 
 ## What a check shows
 
@@ -36,13 +36,13 @@ When the check has none of a rating with at least 5 reviews, a company size, a c
 
 The extension reads LinkedIn job pages and Workday (`*.myworkdayjobs.com`) today.
 
-Planned, no date: Indeed, Greenhouse, Ashby and others.
+Planned: Indeed, Greenhouse, Ashby, ZipRecruiter and others.
 
 ## Getting access
 
 The hosted backend is invite-only.
 
-Request an invite: <FORM_URL>
+Request an invite: <https://app.formbricks.com/s/cmuz9dtugyt7y01sqr00drtw6>
 
 The form asks for a name, email, and optional GitHub username. You receive a key by email. Open the extension popup, open Advanced, paste the key, and click **Save key**. The key stays on your computer and is sent only to the backend.
 
@@ -55,7 +55,7 @@ This extension is not on the Chrome Web Store. Chromium browsers can load it unp
 3. Turn on Developer mode.
 4. Choose Load unpacked and select this folder.
 
-## Self-hosting
+## If Self-hosting
 
 Create a Supabase project. In the SQL editor, run [`supabase/schema.sql`](supabase/schema.sql), then each dated file in this order:
 
